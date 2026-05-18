@@ -1,0 +1,1540 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>入管提出書類 スキャン結合ツール</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<style>
+  :root {
+    --bg: #f5f3ee;
+    --paper: #ffffff;
+    --ink: #1a1a1a;
+    --sub: #6b6b6b;
+    --line: #d8d4cb;
+    --accent: #8b2e2e;
+    --accent-soft: #f5e6e6;
+    --ok: #2d5a3d;
+    --warn: #b07a1a;
+    --preview-bg: #2a2724;
+    --shadow: 0 1px 2px rgba(0,0,0,.04), 0 8px 24px rgba(0,0,0,.06);
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; height: 100%;
+    font-family: "Hiragino Mincho ProN", "Yu Mincho", serif;
+    background: var(--bg); color: var(--ink);
+    font-size: 14px; line-height: 1.6;
+    overflow: hidden;
+  }
+
+  .app { height: 100vh; display: grid; grid-template-rows: auto auto 1fr; }
+
+  header {
+    border-bottom: 2px solid var(--ink);
+    padding: 12px 20px;
+    display: flex; align-items: center;
+    justify-content: space-between; flex-wrap: wrap; gap: 12px;
+    background: var(--paper);
+  }
+  h1 { font-size: 18px; margin: 0; letter-spacing: 0.05em; font-weight: 600; }
+  h1 .h1-sub {
+    font-size: 11px; color: var(--sub);
+    margin-left: 12px; font-weight: normal;
+    font-family: "Hiragino Sans", "Yu Gothic", sans-serif;
+  }
+
+  /* 設定バー */
+  .toolbar {
+    background: var(--paper);
+    border-bottom: 1px solid var(--line);
+    padding: 10px 20px;
+    display: flex; gap: 12px; align-items: center; flex-wrap: wrap;
+    font-family: "Hiragino Sans", "Yu Gothic", sans-serif;
+    font-size: 12px;
+  }
+  .toolbar .group {
+    display: flex; align-items: center; gap: 8px;
+  }
+  .toolbar label {
+    font-size: 10px; color: var(--sub);
+    letter-spacing: 0.08em;
+  }
+  .toolbar input[type="text"] {
+    padding: 5px 8px; border: 1px solid var(--line);
+    background: #fafaf7; font-size: 12px;
+    font-family: "Hiragino Sans", "Yu Gothic", sans-serif;
+    width: 160px;
+  }
+  .toolbar input[type="text"]:focus { outline: none; border-color: var(--accent); background: white; }
+  .toolbar .divider {
+    width: 1px; height: 22px; background: var(--line);
+  }
+  .btn-tool {
+    background: white; border: 1px solid var(--ink); color: var(--ink);
+    padding: 5px 12px; cursor: pointer; font-size: 11.5px;
+    font-family: "Hiragino Sans", "Yu Gothic", sans-serif;
+    letter-spacing: 0.05em; transition: all .15s; white-space: nowrap;
+  }
+  .btn-tool:hover { background: var(--ink); color: white; }
+  .btn-tool.primary { background: var(--ink); color: white; padding: 6px 16px; }
+  .btn-tool.primary:hover { background: var(--accent); }
+  .btn-tool:disabled { background: #ccc; cursor: not-allowed; border-color: #ccc; }
+  .toolbar .stats {
+    margin-left: auto;
+    color: var(--sub);
+    font-size: 11px;
+    display: flex; gap: 12px; align-items: center;
+  }
+  .toolbar .stats strong { color: var(--ink); }
+  .status-msg {
+    font-size: 11px;
+    color: var(--sub);
+    padding: 2px 8px;
+  }
+  .status-msg.ok { color: var(--ok); }
+  .status-msg.err { color: var(--accent); }
+  .status-msg.work { color: var(--warn); }
+
+  /* メインエリア */
+  .main {
+    display: grid;
+    grid-template-columns: var(--split-left, 60%) 6px minmax(0, 1fr);
+    overflow: hidden; min-height: 0;
+  }
+
+  /* リサイザー */
+  .resizer {
+    background: var(--line);
+    cursor: col-resize;
+    position: relative;
+    transition: background .15s;
+    user-select: none;
+  }
+  .resizer:hover, .resizer.dragging {
+    background: var(--accent);
+  }
+  .resizer::after {
+    content: "";
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    width: 2px; height: 40px;
+    background: var(--sub);
+    border-radius: 1px;
+    opacity: 0.4;
+  }
+  .resizer:hover::after, .resizer.dragging::after {
+    background: white;
+    opacity: 1;
+  }
+  body.resizing {
+    cursor: col-resize;
+    user-select: none;
+  }
+  body.resizing iframe, body.resizing canvas {
+    pointer-events: none;
+  }
+
+  /* 左：チェックリストPDF + 行ごとの添付ボタン */
+  .left {
+    background: var(--bg);
+    overflow-y: auto;
+    border-right: 1px solid var(--line);
+    padding: 16px;
+    position: relative;
+  }
+  /* 左ペイン上部のズームバー */
+  .left-toolbar {
+    position: sticky;
+    top: -16px;
+    margin: -16px -16px 12px;
+    padding: 8px 14px;
+    background: rgba(245, 243, 238, 0.95);
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+    border-bottom: 1px solid var(--line);
+    z-index: 20;
+    display: flex; align-items: center; gap: 10px;
+    font-family: "Hiragino Sans", "Yu Gothic", sans-serif;
+    font-size: 11px; color: var(--sub);
+  }
+  .zoom-btn {
+    background: white;
+    border: 1px solid var(--line);
+    width: 26px; height: 26px;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--ink);
+    padding: 0;
+    display: inline-flex; align-items: center; justify-content: center;
+    transition: all .15s;
+  }
+  .zoom-btn:hover { background: var(--ink); color: white; border-color: var(--ink); }
+  .zoom-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .zoom-display {
+    min-width: 50px;
+    text-align: center;
+    font-family: "SF Mono", "Menlo", monospace;
+    font-size: 11px;
+    color: var(--ink);
+  }
+  .left-toolbar .hint {
+    margin-left: auto;
+    font-size: 10px;
+    color: var(--sub);
+    letter-spacing: 0.05em;
+  }
+  .empty-state {
+    text-align: center;
+    padding: 60px 20px;
+    color: var(--sub);
+    font-family: "Hiragino Sans", "Yu Gothic", sans-serif;
+  }
+  .empty-state-icon { font-size: 56px; opacity: 0.3; margin-bottom: 16px; }
+  .empty-state h3 {
+    font-size: 14px; font-weight: 600; margin: 0 0 8px;
+    letter-spacing: 0.08em;
+  }
+  .empty-state p { font-size: 12px; line-height: 1.8; margin: 0 0 16px; }
+
+  /* PDFページコンテナ */
+  .pdf-pages {
+    display: flex; flex-direction: column; gap: 20px;
+    align-items: center;
+  }
+  .pdf-page-wrap {
+    position: relative;
+    background: white;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+  }
+  .pdf-page-wrap canvas { display: block; }
+
+  /* 各項目の右側オーバーレイ（PDFの行に対応） */
+  .row-overlay {
+    position: absolute;
+    /* leftはJSで動的に：PDFの右端より少し右 */
+    display: flex; align-items: center; gap: 4px;
+    pointer-events: auto;
+  }
+  .row-overlay::before {
+    content: "";
+    position: absolute;
+    left: -10px; top: 50%;
+    width: 8px; height: 1px;
+    background: var(--accent);
+  }
+  .row-attach {
+    background: white;
+    border: 1px solid var(--ink);
+    padding: 1px 8px;
+    cursor: pointer;
+    font-size: 10.5px;
+    font-family: "Hiragino Sans", "Yu Gothic", sans-serif;
+    letter-spacing: 0.02em;
+    transition: all .15s;
+    white-space: nowrap;
+    display: flex; align-items: center; gap: 4px;
+    max-width: 220px;
+    line-height: 1.3;
+    height: 18px;
+  }
+  .row-attach:hover {
+    background: var(--ink); color: white;
+  }
+  .row-attach.filled {
+    background: var(--accent-soft);
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+  .row-attach.filled.selected {
+    background: var(--accent);
+    color: white;
+  }
+  .row-attach .fname-mini {
+    overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 130px;
+  }
+  .row-attach .pages-mini {
+    font-size: 9px; opacity: 0.7;
+  }
+  .row-clear {
+    background: white;
+    border: 1px solid var(--line);
+    width: 18px; height: 18px;
+    cursor: pointer;
+    font-size: 10px;
+    color: var(--sub);
+    padding: 0;
+    display: inline-flex; align-items: center; justify-content: center;
+    transition: all .15s;
+  }
+  .row-clear:hover {
+    background: var(--accent); color: white; border-color: var(--accent);
+  }
+  .row-no-badge {
+    background: var(--ink);
+    color: white;
+    font-family: "Hiragino Mincho ProN", "Yu Mincho", serif;
+    font-size: 10.5px;
+    padding: 1px 6px;
+    font-weight: 600;
+    min-width: 22px;
+    height: 18px;
+    line-height: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+  }
+  .row-no-badge.filled {
+    background: var(--accent);
+  }
+
+  /* 右：選択中の添付ファイルプレビュー */
+  .right {
+    background: var(--preview-bg);
+    display: flex; flex-direction: column;
+    overflow: hidden; min-width: 0;
+  }
+  .preview-header {
+    padding: 10px 18px;
+    border-bottom: 1px solid rgba(255,255,255,0.1);
+    display: flex; align-items: center; justify-content: space-between;
+    color: #e8e4dc;
+    font-family: "Hiragino Sans", "Yu Gothic", sans-serif;
+    font-size: 12px; min-height: 44px;
+  }
+  .preview-header-title {
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    flex: 1; min-width: 0; padding-right: 12px;
+  }
+  .preview-header-title .ph-key {
+    color: var(--accent-soft);
+    font-family: "Hiragino Mincho ProN", "Yu Mincho", serif;
+    font-size: 13px; font-weight: 600; margin-right: 8px;
+    letter-spacing: 0.05em;
+  }
+  .preview-header-title .ph-name {
+    color: rgba(255,255,255,0.6); font-size: 11px;
+  }
+  .preview-nav {
+    display: flex; gap: 6px; align-items: center;
+    font-size: 11px; color: rgba(255,255,255,0.7);
+    white-space: nowrap;
+  }
+  .preview-zoom {
+    display: flex; align-items: center; gap: 4px;
+    margin-right: 8px;
+    padding-right: 8px;
+    border-right: 1px solid rgba(255,255,255,0.15);
+  }
+  .preview-zoom-btn {
+    background: rgba(255,255,255,0.08);
+    border: 1px solid rgba(255,255,255,0.15);
+    color: white;
+    width: 24px; height: 24px;
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 0;
+    display: inline-flex; align-items: center; justify-content: center;
+    transition: all .15s;
+    font-family: "Hiragino Sans", "Yu Gothic", sans-serif;
+  }
+  .preview-zoom-btn:hover:not(:disabled) { background: rgba(255,255,255,0.18); }
+  .preview-zoom-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+  .preview-zoom-display {
+    min-width: 42px;
+    text-align: center;
+    font-family: "SF Mono", "Menlo", monospace;
+    font-size: 10.5px;
+    color: rgba(255,255,255,0.85);
+  }
+  .preview-page-info {
+    color: rgba(255,255,255,0.7);
+    font-size: 11px;
+    padding: 0 6px;
+    font-family: "Hiragino Sans", "Yu Gothic", sans-serif;
+  }
+  .btn-nav {
+    background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.15);
+    color: white; padding: 4px 10px; cursor: pointer;
+    font-size: 11px; transition: all .15s;
+    display: inline-flex; align-items: center; justify-content: center;
+    height: 26px;
+    font-family: "Hiragino Sans", "Yu Gothic", sans-serif;
+  }
+  .btn-nav:hover:not(:disabled) { background: rgba(255,255,255,0.18); }
+  .btn-nav:disabled { opacity: 0.3; cursor: not-allowed; }
+
+  /* メインプレビュー＋サムネイルレールの2カラム */
+  .preview-content {
+    flex: 1;
+    display: grid;
+    grid-template-columns: 1fr 140px;
+    overflow: hidden;
+    min-height: 0;
+  }
+
+  .preview-body {
+    overflow: auto;
+    padding: 18px 18px 30px;
+    min-height: 0;
+    scroll-behavior: smooth;
+  }
+  .preview-pages-stack {
+    display: flex; flex-direction: column;
+    align-items: center;
+    gap: 18px;
+  }
+  .preview-page-item {
+    background: white;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+    max-width: 100%;
+    position: relative;
+  }
+  .preview-page-item canvas, .preview-page-item img {
+    display: block; max-width: 100%; height: auto;
+  }
+  .preview-page-label {
+    position: absolute;
+    top: -18px; left: 2px;
+    font-size: 10px;
+    color: rgba(255,255,255,0.4);
+    font-family: "Hiragino Sans", "Yu Gothic", sans-serif;
+    letter-spacing: 0.08em;
+  }
+
+  /* サムネイルレール */
+  .preview-thumbs {
+    background: rgba(0,0,0,0.25);
+    border-left: 1px solid rgba(255,255,255,0.08);
+    overflow-y: auto;
+    padding: 14px 10px;
+    display: flex; flex-direction: column;
+    align-items: center;
+    gap: 10px;
+  }
+  .thumb-item {
+    cursor: pointer;
+    text-align: center;
+    transition: all .15s;
+    width: 100%;
+    max-width: 110px;
+  }
+  .thumb-item canvas, .thumb-item img {
+    display: block;
+    width: 100%; height: auto;
+    background: white;
+    border: 2px solid transparent;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+    transition: border-color .15s;
+  }
+  .thumb-item:hover canvas, .thumb-item:hover img {
+    border-color: rgba(255,255,255,0.4);
+  }
+  .thumb-item.active canvas, .thumb-item.active img {
+    border-color: var(--accent-soft);
+  }
+  .thumb-label {
+    font-size: 10px;
+    color: rgba(255,255,255,0.55);
+    margin-top: 4px;
+    font-family: "Hiragino Sans", "Yu Gothic", sans-serif;
+  }
+  .thumb-item.active .thumb-label {
+    color: var(--accent-soft);
+    font-weight: 600;
+  }
+  /* サムネ用カスタムスクロールバー */
+  .preview-thumbs::-webkit-scrollbar { width: 6px; }
+  .preview-thumbs::-webkit-scrollbar-track { background: transparent; }
+  .preview-thumbs::-webkit-scrollbar-thumb {
+    background: rgba(255,255,255,0.15); border-radius: 3px;
+  }
+  .preview-thumbs::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.3); }
+
+  /* 1ページのみのとき */
+  .preview-content.single-page {
+    grid-template-columns: 1fr;
+  }
+  .preview-content.single-page .preview-thumbs { display: none; }
+  /* プレースホルダ・ローディング時 */
+  .preview-content.empty {
+    grid-template-columns: 1fr;
+  }
+  .preview-content.empty .preview-thumbs { display: none; }
+
+  .preview-placeholder {
+    color: rgba(255,255,255,0.4);
+    text-align: center;
+    font-family: "Hiragino Sans", "Yu Gothic", sans-serif;
+    font-size: 12px;
+    align-self: center; margin: auto;
+    padding: 40px 20px;
+  }
+  .preview-placeholder-icon { font-size: 44px; margin-bottom: 12px; opacity: 0.3; }
+  .preview-placeholder-text { letter-spacing: 0.08em; line-height: 1.8; }
+  .preview-loading {
+    color: rgba(255,255,255,0.6); align-self: center; margin: auto;
+    font-family: "Hiragino Sans", "Yu Gothic", sans-serif; font-size: 12px;
+    padding: 40px;
+  }
+
+  @media (max-width: 1000px) {
+    .main { grid-template-columns: 1fr; grid-template-rows: 1fr 1fr; }
+    .left { border-right: none; border-bottom: 1px solid var(--line); }
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <div>
+      <h1>入管提出書類　スキャン結合<span class="h1-sub">特定技能１号・在留資格認定証明書交付申請　第１表</span></h1>
+    </div>
+    <div style="font-size:11px;color:var(--sub);" id="dateDisplay"></div>
+  </header>
+
+  <!-- 設定バー -->
+  <div class="toolbar">
+    <div class="group">
+      <button class="btn-tool" id="loadTemplateBtn">📄 公式PDFを読込</button>
+      <span class="status-msg" id="templateStatusMsg">未読込</span>
+    </div>
+    <div class="divider"></div>
+    <div class="group">
+      <label>申請人</label>
+      <input type="text" id="applicantName" placeholder="氏名">
+    </div>
+    <div class="group">
+      <label>日付</label>
+      <input type="text" id="dateField" style="width:100px;">
+    </div>
+    <div class="stats">
+      <span>チェック <strong id="checkedCount">0</strong>/<span id="totalCount">12</span></span>
+      <span>ファイル <strong id="filledCount">0</strong>件</span>
+      <span class="status-msg" id="status"></span>
+      <button class="btn-tool primary" id="mergeBtn" disabled>結合してダウンロード</button>
+    </div>
+  </div>
+
+  <!-- メインエリア -->
+  <div class="main">
+    <!-- 左：チェックリストPDF -->
+    <div class="left" id="leftPane">
+      <div class="left-toolbar" id="leftToolbar" style="display:none;">
+        <button class="zoom-btn" id="zoomOutBtn" title="縮小">−</button>
+        <span class="zoom-display" id="zoomDisplay">100%</span>
+        <button class="zoom-btn" id="zoomInBtn" title="拡大">＋</button>
+        <button class="zoom-btn" id="zoomFitBtn" title="幅に合わせる" style="width:auto;padding:0 10px;font-size:11px;font-weight:normal;">幅合せ</button>
+        <span class="hint">マウスホイールでスクロール／Ctrl + ホイールで拡縮</span>
+      </div>
+      <div class="empty-state" id="emptyState">
+        <div class="empty-state-icon">📋</div>
+        <h3>チェックリストPDFを読み込んでください</h3>
+        <p>
+          入管庁の「特定技能１号」に係る提出書類一覧表（在留資格認定証明書交付申請用）<br>
+          を上のツールバーから読み込むと、ここにプレビューされます。<br>
+          各行の右側に表示されるボタンから書類を添付できます。
+        </p>
+        <button class="btn-tool" onclick="document.getElementById('loadTemplateBtn').click()">📄 PDFを選択</button>
+      </div>
+      <div class="pdf-pages" id="pdfPages" style="display:none;"></div>
+    </div>
+
+    <!-- リサイザー -->
+    <div class="resizer" id="resizer" title="ドラッグで左右の幅を調整"></div>
+
+    <!-- 右：添付プレビュー -->
+    <div class="right">
+      <div class="preview-header">
+        <div class="preview-header-title" id="previewHeaderTitle">
+          <span style="color:rgba(255,255,255,0.4);font-family:'Hiragino Sans',sans-serif;font-size:11px;letter-spacing:0.1em;">ATTACHMENT PREVIEW</span>
+        </div>
+        <div class="preview-nav" id="previewNav"></div>
+      </div>
+      <div class="preview-content empty" id="previewContent">
+        <div class="preview-body" id="previewBody">
+          <div class="preview-placeholder">
+            <div class="preview-placeholder-icon">📎</div>
+            <div class="preview-placeholder-text">
+              左の項目に添付したファイルが<br>
+              ここにプレビューされます
+            </div>
+          </div>
+        </div>
+        <div class="preview-thumbs" id="previewThumbs"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<input type="file" id="templateFileInput" style="display:none" accept=".pdf,application/pdf">
+<input type="file" id="hiddenFileInput" style="display:none" accept=".pdf,application/pdf,image/jpeg,image/png,image/jpg">
+
+<script>
+pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+const { PDFDocument, rgb } = PDFLib;
+
+/* ============================================================
+ * 公式PDFの座標マッピング
+ * y は pdf-lib 座標系（下端基準）
+ * 公式PDF全体は7ページ。第1表は pdfPageIdx 1, 2（0-indexed）
+ * ============================================================ */
+const STAMP_X_YES = 425;
+const STAMP_X_NO  = 441;
+const STAMP_RADIUS = 8;
+
+const STAMP_POSITIONS = {
+  1:  { pdfPageIdx: 1, y: 716.3 },
+  2:  { pdfPageIdx: 1, y: 677.0 },
+  3:  { pdfPageIdx: 1, y: 637.1 },
+  4:  { pdfPageIdx: 1, y: 591.7 },
+  5:  { pdfPageIdx: 1, y: 546.2 },
+  '5b':{ pdfPageIdx: 1, y: 489.3 },
+  6:  { pdfPageIdx: 1, y: 443.8 },
+  7:  { pdfPageIdx: 1, y: 421.0 },
+  '7b':{ pdfPageIdx: 1, y: 398.2 },
+  '7c':{ pdfPageIdx: 1, y: 369.8 },
+  '7d':{ pdfPageIdx: 1, y: 335.7 },
+  8:  { pdfPageIdx: 1, y: 284.4 },
+  '9a':{ pdfPageIdx: 1, y: 216.1 },
+  '9b':{ pdfPageIdx: 1, y: 159.2 },
+  10: { pdfPageIdx: 1, y: 125.2 },
+  '10b':{ pdfPageIdx: 1, y: 99.8 },
+  11: { pdfPageIdx: 1, y: 74.5 },
+  12: { pdfPageIdx: 2, y: 723.6 },
+};
+
+// UI項目（入管庁番号と一致）
+const DOCS = [
+  { no: 1,  key: 'envelope',            short: '返信用封筒',      stampKey: [1]    },
+  { no: 2,  key: 'name_list',           short: '申請人名簿',      stampKey: [2]    },
+  { no: 3,  key: 'cover_list',          short: '一覧表(本PDF)',  stampKey: [3], isTemplate: true },
+  { no: 4,  key: 'application_form',    short: '認定証明書交付申請書', stampKey: [4]    },
+  { no: 5,  key: 'reward_explanation',  short: '報酬説明書・賃金規程', stampKey: [5,'5b']},
+  { no: 6,  key: 'employment_contract', short: '雇用契約書',      stampKey: [6]    },
+  { no: 7,  key: 'work_condition',      short: '雇用条件書 等',  stampKey: [7,'7b','7c','7d']},
+  { no: 8,  key: 'support_plan',        short: '支援計画書',      stampKey: [8]    },
+  { no: 9,  key: 'employment_route',    short: '雇用の経緯説明書', stampKey: ['9a','9b']},
+  { no: 10, key: 'health_check',        short: '健康診断個人票',  stampKey: [10,'10b']},
+  { no: 11, key: 'guidance_confirm',    short: '事前ガイダンス確認書', stampKey: [11]   },
+  { no: 12, key: 'support_commission',  short: '支援委託契約説明書', stampKey: [12]   },
+];
+
+// 状態
+const slots = {};       // key → ファイル
+const checked = {};     // key → bool（手動チェック）
+let selectedKey = null;
+let templatePdfBytes = null;
+let templatePdfJs = null;     // pdf.js PDF object
+let pageRenderInfo = [];      // 各PDFページの canvas / scale / height など
+
+// 初期化
+const today = new Date();
+const yyyy = today.getFullYear();
+const mm = String(today.getMonth() + 1).padStart(2, '0');
+const dd = String(today.getDate()).padStart(2, '0');
+document.getElementById('dateField').value = `${yyyy}${mm}${dd}`;
+document.getElementById('dateDisplay').textContent = `${yyyy}．${mm}．${dd}`;
+document.getElementById('totalCount').textContent = DOCS.length;
+
+const loadTemplateBtn = document.getElementById('loadTemplateBtn');
+const templateFileInput = document.getElementById('templateFileInput');
+const templateStatusMsg = document.getElementById('templateStatusMsg');
+const emptyState = document.getElementById('emptyState');
+const pdfPages = document.getElementById('pdfPages');
+const hiddenFileInput = document.getElementById('hiddenFileInput');
+const mergeBtn = document.getElementById('mergeBtn');
+const statusEl = document.getElementById('status');
+const applicantInput = document.getElementById('applicantName');
+const dateInput = document.getElementById('dateField');
+const filledCountEl = document.getElementById('filledCount');
+const checkedCountEl = document.getElementById('checkedCount');
+
+const previewHeaderTitle = document.getElementById('previewHeaderTitle');
+const previewNav = document.getElementById('previewNav');
+const previewBody = document.getElementById('previewBody');
+const previewThumbs = document.getElementById('previewThumbs');
+const previewContent = document.getElementById('previewContent');
+
+// 公式PDF読込
+loadTemplateBtn.addEventListener('click', () => templateFileInput.click());
+templateFileInput.addEventListener('change', async e => {
+  const file = e.target.files[0];
+  if (!file) return;
+  try {
+    setStatus('PDF読込中...', 'work');
+    const ab = await file.arrayBuffer();
+    templatePdfBytes = new Uint8Array(ab);
+    templateStatusMsg.innerHTML = `<strong style="color:var(--ok);">✓ ${escapeHtml(file.name)}</strong>`;
+    loadTemplateBtn.textContent = '📄 別のPDFに変更';
+    await renderTemplatePdf();
+    setStatus('', '');
+    updateSummary();
+  } catch (err) {
+    setStatus('PDF読込エラー: ' + err.message, 'err');
+    console.error(err);
+  }
+  templateFileInput.value = '';
+});
+
+let currentSelectKey = null;
+hiddenFileInput.addEventListener('change', e => {
+  const file = e.target.files[0];
+  if (file && currentSelectKey) handleFile(currentSelectKey, file);
+  hiddenFileInput.value = '';
+  currentSelectKey = null;
+});
+
+applicantInput.addEventListener('input', () => {});
+dateInput.addEventListener('input', () => {});
+
+// ========== 公式PDFをCanvasに描画＋オーバーレイ配置 ==========
+// ズーム状態（CSSサイズ倍率）
+let userZoom = 1.0; // 1.0 = 幅合わせ基準
+const ZOOM_MIN = 0.5;
+const ZOOM_MAX = 3.0;
+const ZOOM_STEP = 0.15;
+
+// デバイスピクセル比を考慮した高精細レンダリング基準スケール
+function calcBaseScale(pdfWidth) {
+  // 左ペインの幅に応じて、右側ボタン領域を可変に
+  // 狭ければボタンを240px幅で、十分広ければ最大280pxまで
+  const paneWidth = pdfPages.clientWidth;
+  const buttonArea = Math.max(200, Math.min(260, paneWidth * 0.28));
+  const containerWidth = paneWidth - 40 - buttonArea;
+  // 表示時の幅倍率（CSSサイズ）
+  const fitScale = Math.max(0.8, Math.min(2.5, containerWidth / pdfWidth));
+  return fitScale;
+}
+
+async function renderTemplatePdf() {
+  emptyState.style.display = 'none';
+  pdfPages.style.display = 'flex';
+  document.getElementById('leftToolbar').style.display = 'flex';
+  pdfPages.innerHTML = '<div style="color:var(--sub);padding:20px;">描画中...</div>';
+
+  // 描画用に再生成
+  const pdf = await pdfjsLib.getDocument({ data: templatePdfBytes.slice(0) }).promise;
+  templatePdfJs = pdf;
+  pageRenderInfo = [];
+
+  pdfPages.innerHTML = '';
+
+  // デバイスピクセル比（Retina対応）
+  const DPR = window.devicePixelRatio || 1;
+
+  for (let i = 0; i < pdf.numPages; i++) {
+    const page = await pdf.getPage(i + 1);
+    const v1 = page.getViewport({ scale: 1 });
+    // CSS表示スケール（幅合わせ × ユーザーズーム）
+    const baseFitScale = calcBaseScale(v1.width);
+    const cssScale = baseFitScale * userZoom;
+    // 内部レンダリングは DPR を掛けて高精細に
+    const renderScale = cssScale * DPR;
+    const renderViewport = page.getViewport({ scale: renderScale });
+    const cssWidth = v1.width * cssScale;
+    const cssHeight = v1.height * cssScale;
+
+    const wrap = document.createElement('div');
+    wrap.className = 'pdf-page-wrap';
+    wrap.style.width = cssWidth + 'px';
+    wrap.dataset.pageIdx = i;
+
+    const canvas = document.createElement('canvas');
+    // 内部解像度（描画用）
+    canvas.width = renderViewport.width;
+    canvas.height = renderViewport.height;
+    // 表示サイズ（CSS）
+    canvas.style.width = cssWidth + 'px';
+    canvas.style.height = cssHeight + 'px';
+    wrap.appendChild(canvas);
+
+    await page.render({ canvasContext: canvas.getContext('2d'), viewport: renderViewport }).promise;
+
+    pageRenderInfo.push({
+      pdfPageIdx: i,
+      pdfHeight: v1.height,
+      pdfWidth: v1.width,
+      cssScale,       // CSS表示倍率
+      renderScale,    // 内部描画倍率
+      cssWidth,
+      cssHeight,
+      wrapEl: wrap,
+    });
+
+    pdfPages.appendChild(wrap);
+  }
+
+  await drawStampsOnCanvas();
+  layoutOverlays();
+  updateZoomDisplay();
+}
+
+// Canvas に「有・無」の○を描画（高解像度対応）
+async function drawStampsOnCanvas() {
+  if (!templatePdfJs) return;
+  const DPR = window.devicePixelRatio || 1;
+  for (let i = 0; i < pageRenderInfo.length; i++) {
+    const info = pageRenderInfo[i];
+    const canvas = info.wrapEl.querySelector('canvas');
+    const ctx = canvas.getContext('2d');
+    // 再描画
+    const page = await templatePdfJs.getPage(i + 1);
+    const renderViewport = page.getViewport({ scale: info.renderScale });
+    canvas.width = renderViewport.width;
+    canvas.height = renderViewport.height;
+    canvas.style.width = info.cssWidth + 'px';
+    canvas.style.height = info.cssHeight + 'px';
+    await page.render({ canvasContext: ctx, viewport: renderViewport }).promise;
+
+    // ○を描画（renderScale座標系で）
+    DOCS.forEach(doc => {
+      const isChecked = doc.isTemplate
+        ? !!templatePdfBytes
+        : (checked[doc.key] !== undefined ? checked[doc.key] : !!slots[doc.key]);
+
+      doc.stampKey.forEach(k => {
+        const pos = STAMP_POSITIONS[k];
+        if (!pos || pos.pdfPageIdx !== i) return;
+
+        const x = (isChecked ? STAMP_X_YES : STAMP_X_NO) * info.renderScale;
+        const y = (info.pdfHeight - (pos.y + 4)) * info.renderScale;
+        const r = STAMP_RADIUS * info.renderScale;
+
+        ctx.beginPath();
+        ctx.arc(x, y, r, 0, Math.PI * 2);
+        ctx.strokeStyle = 'rgba(220, 38, 38, 0.85)';
+        ctx.lineWidth = Math.max(1.5, 1.8 * info.renderScale * 0.7);
+        ctx.stroke();
+      });
+    });
+  }
+}
+
+// 各項目のボタンをPDFの行に合わせて配置
+function layoutOverlays() {
+  // 既存のオーバーレイを削除
+  document.querySelectorAll('.row-overlay').forEach(el => el.remove());
+
+  DOCS.forEach(doc => {
+    // 代表座標：最初のstampKey
+    const repKey = doc.stampKey[0];
+    const pos = STAMP_POSITIONS[repKey];
+    if (!pos) return;
+    const info = pageRenderInfo[pos.pdfPageIdx];
+    if (!info) return;
+
+    // canvas座標
+    // canvas座標（CSS座標系）
+    const yCanvas = (info.pdfHeight - (pos.y + 4)) * info.cssScale;
+    const xRight = info.cssWidth + 14;
+
+    const overlay = document.createElement('div');
+    overlay.className = 'row-overlay';
+    overlay.style.left = xRight + 'px';
+    overlay.style.top = (yCanvas - 9) + 'px'; // ボタン中心が行に合うように（ボタン高さ18px）
+
+    const slot = slots[doc.key];
+    const isSelected = selectedKey === doc.key;
+
+    let inner = `
+      <span class="row-no-badge ${slot ? 'filled' : ''}">${doc.no}</span>
+      <button class="row-attach ${slot ? 'filled' : ''} ${isSelected ? 'selected' : ''}" data-action="${doc.isTemplate ? 'preview-template' : 'select'}" data-key="${doc.key}" title="${escapeHtml(doc.short)}">
+    `;
+    if (doc.isTemplate) {
+      inner += `<span class="fname-mini">📋 ${escapeHtml(doc.short)}</span>`;
+    } else if (slot) {
+      inner += `<span class="fname-mini">📎 ${escapeHtml(slot.name)}</span><span class="pages-mini">${slot.pages || '…'}p</span>`;
+    } else {
+      inner += `<span class="fname-mini">＋ ${escapeHtml(doc.short)}</span>`;
+    }
+    inner += `</button>`;
+    if (slot && !doc.isTemplate) {
+      inner += `<button class="row-clear" data-action="clear" data-key="${doc.key}" title="クリア">×</button>`;
+    }
+    overlay.innerHTML = inner;
+    info.wrapEl.appendChild(overlay);
+
+    // クリックハンドラ
+    overlay.querySelector('[data-action="select"]')?.addEventListener('click', e => {
+      const key = e.currentTarget.dataset.key;
+      if (slots[key]) {
+        // 既にファイルあるなら、選択（プレビュー）
+        selectedKey = key;
+        renderOverlaysOnly();
+        showAttachmentPreview(key);
+      } else {
+        // 添付
+        currentSelectKey = key;
+        hiddenFileInput.click();
+      }
+    });
+    overlay.querySelector('[data-action="preview-template"]')?.addEventListener('click', () => {
+      // 公式PDFそのものは左ですでに見えてる。右ペインには「これがNo.3」と案内
+      selectedKey = doc.key;
+      renderOverlaysOnly();
+      if (pageObserver) { pageObserver.disconnect(); pageObserver = null; }
+      previewHeaderTitle.innerHTML = `<span class="ph-key">${doc.no}．</span><span class="ph-name">${escapeHtml(doc.short)}（左ペインに表示中）</span>`;
+      previewNav.innerHTML = '';
+      previewThumbs.innerHTML = '';
+      previewContent.classList.add('empty');
+      previewContent.classList.remove('single-page');
+      previewBody.innerHTML = `
+        <div class="preview-placeholder" style="color:rgba(255,255,255,0.55);">
+          <div class="preview-placeholder-icon">📋</div>
+          <div class="preview-placeholder-text">
+            このチェックリスト本体です<br>
+            左側のプレビューが提出ファイルの先頭になります
+          </div>
+        </div>
+      `;
+    });
+    overlay.querySelector('[data-action="clear"]')?.addEventListener('click', e => {
+      e.stopPropagation();
+      const key = e.currentTarget.dataset.key;
+      delete slots[key];
+      delete checked[key];
+      if (selectedKey === key) { selectedKey = null; clearAttachmentPreview(); }
+      drawStampsOnCanvas();
+      layoutOverlays();
+      updateSummary();
+    });
+
+    // 行へのダブルクリックでチェック切替（左クリック1回は添付/プレビュー）
+    overlay.querySelector('.row-attach')?.addEventListener('contextmenu', e => {
+      e.preventDefault();
+      // 右クリックでチェックトグル（ファイル無しの状態でも）
+      const key = doc.key;
+      const cur = checked[key] !== undefined ? checked[key] : !!slots[key];
+      checked[key] = !cur;
+      drawStampsOnCanvas();
+      updateSummary();
+    });
+  });
+}
+
+// オーバーレイのみ再描画（位置は再計算しない、状態だけ更新）
+function renderOverlaysOnly() {
+  layoutOverlays();
+}
+
+async function handleFile(key, file) {
+  const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
+  const isImg = file.type.startsWith('image/');
+  if (!isPdf && !isImg) {
+    setStatus(`未対応の形式：${file.name}`, 'err');
+    return;
+  }
+  setStatus('', '');
+  const arrayBuffer = await file.arrayBuffer();
+  const slot = {
+    name: file.name,
+    type: isPdf ? 'pdf' : 'image',
+    mime: file.type,
+    size: file.size,
+    arrayBuffer,
+    pages: isPdf ? 0 : 1,
+  };
+  slots[key] = slot;
+  if (!checked[key]) checked[key] = true;
+  selectedKey = key;
+
+  // ページ数取得
+  if (isPdf) {
+    try {
+      const pdf = await pdfjsLib.getDocument({ data: arrayBuffer.slice(0) }).promise;
+      slot.pages = pdf.numPages;
+      slot._pdfDoc = pdf;
+    } catch (e) { console.error(e); }
+  }
+
+  await drawStampsOnCanvas();
+  layoutOverlays();
+  updateSummary();
+  showAttachmentPreview(key);
+}
+
+function updateSummary() {
+  const filled = Object.keys(slots).length;
+  filledCountEl.textContent = filled;
+  let chk = 0;
+  DOCS.forEach(d => {
+    if (d.isTemplate) {
+      if (templatePdfBytes) chk++;
+    } else {
+      const ic = checked[d.key] !== undefined ? checked[d.key] : !!slots[d.key];
+      if (ic) chk++;
+    }
+  });
+  checkedCountEl.textContent = chk;
+  mergeBtn.disabled = filled === 0 && !templatePdfBytes;
+}
+
+// ========== 右ペイン：添付ファイルプレビュー（全ページスクロール + サムネレール + ズーム） ==========
+let previewState = { key: null, pdf: null, pageEls: [], imgEl: null };
+let pageObserver = null;
+
+// 右ペインのズーム
+let previewZoom = 1.0;
+const PREVIEW_ZOOM_MIN = 0.5;
+const PREVIEW_ZOOM_MAX = 3.0;
+const PREVIEW_ZOOM_STEP = 0.15;
+
+function clearAttachmentPreview() {
+  if (pageObserver) { pageObserver.disconnect(); pageObserver = null; }
+  previewState = { key: null, pdf: null, pageEls: [], imgEl: null };
+  previewHeaderTitle.innerHTML = `<span style="color:rgba(255,255,255,0.4);font-family:'Hiragino Sans',sans-serif;font-size:11px;letter-spacing:0.1em;">ATTACHMENT PREVIEW</span>`;
+  previewNav.innerHTML = '';
+  previewThumbs.innerHTML = '';
+  previewContent.classList.add('empty');
+  previewContent.classList.remove('single-page');
+  previewBody.innerHTML = `
+    <div class="preview-placeholder">
+      <div class="preview-placeholder-icon">📎</div>
+      <div class="preview-placeholder-text">
+        左の項目に添付したファイルが<br>
+        ここにプレビューされます
+      </div>
+    </div>
+  `;
+}
+
+// ズームバー＋ページナビを描画
+function renderPreviewNav(showPageNav, pdfNumPages) {
+  let html = `
+    <div class="preview-zoom">
+      <button class="preview-zoom-btn" id="prevZoomOutBtn" title="縮小">−</button>
+      <span class="preview-zoom-display" id="prevZoomDisplay">${Math.round(previewZoom * 100)}%</span>
+      <button class="preview-zoom-btn" id="prevZoomInBtn" title="拡大">＋</button>
+      <button class="preview-zoom-btn" id="prevZoomFitBtn" title="幅合わせ" style="width:auto;padding:0 8px;font-size:10px;font-weight:normal;">幅</button>
+    </div>
+  `;
+  if (showPageNav) {
+    html += `
+      <button class="btn-nav" id="prevPageBtn">◀ 前</button>
+      <span class="preview-page-info" id="pageInfo">1 / ${pdfNumPages}</span>
+      <button class="btn-nav" id="nextPageBtn">次 ▶</button>
+    `;
+  }
+  previewNav.innerHTML = html;
+
+  // ズーム操作
+  const updatePreviewZoomDisplay = () => {
+    const d = document.getElementById('prevZoomDisplay');
+    if (d) d.textContent = `${Math.round(previewZoom * 100)}%`;
+    const inBtn = document.getElementById('prevZoomInBtn');
+    const outBtn = document.getElementById('prevZoomOutBtn');
+    if (inBtn) inBtn.disabled = previewZoom >= PREVIEW_ZOOM_MAX;
+    if (outBtn) outBtn.disabled = previewZoom <= PREVIEW_ZOOM_MIN;
+  };
+  updatePreviewZoomDisplay();
+
+  document.getElementById('prevZoomInBtn').addEventListener('click', () => {
+    previewZoom = Math.min(PREVIEW_ZOOM_MAX, previewZoom + PREVIEW_ZOOM_STEP);
+    updatePreviewZoomDisplay();
+    rerenderPreviewPages();
+  });
+  document.getElementById('prevZoomOutBtn').addEventListener('click', () => {
+    previewZoom = Math.max(PREVIEW_ZOOM_MIN, previewZoom - PREVIEW_ZOOM_STEP);
+    updatePreviewZoomDisplay();
+    rerenderPreviewPages();
+  });
+  document.getElementById('prevZoomFitBtn').addEventListener('click', () => {
+    previewZoom = 1.0;
+    updatePreviewZoomDisplay();
+    rerenderPreviewPages();
+  });
+}
+
+// ズーム変更時に再描画（debounce）
+let previewZoomDebounce = null;
+function rerenderPreviewPages() {
+  clearTimeout(previewZoomDebounce);
+  previewZoomDebounce = setTimeout(async () => {
+    if (!previewState.key) return;
+    await redrawPreviewMain();
+  }, 80);
+}
+
+// メイン描画＋サムネ描画を一括実行
+async function redrawPreviewMain() {
+  const { pdf, key } = previewState;
+  const slot = slots[key];
+  if (!slot) return;
+
+  if (slot.type === 'image') {
+    if (previewState.imgEl) {
+      previewState.imgEl.style.transform = `scale(${previewZoom})`;
+      previewState.imgEl.style.transformOrigin = 'top center';
+    }
+    return;
+  }
+
+  if (!pdf) return;
+
+  const stack = previewBody.querySelector('.preview-pages-stack');
+  if (!stack) return;
+
+  if (pageObserver) { pageObserver.disconnect(); pageObserver = null; }
+
+  const DPR = window.devicePixelRatio || 1;
+  const availableWidth = (previewBody.clientWidth || 600) - 36;
+
+  previewState.pageEls = [];
+  stack.innerHTML = '';
+
+  // メイン全ページ描画
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const page = await pdf.getPage(i);
+    const v1 = page.getViewport({ scale: 1 });
+    const fitScale = Math.min(2.0, availableWidth / v1.width);
+    const cssScale = fitScale * previewZoom;
+    const renderScale = cssScale * DPR;
+    const renderViewport = page.getViewport({ scale: renderScale });
+    const cssWidth = v1.width * cssScale;
+    const cssHeight = v1.height * cssScale;
+
+    const item = document.createElement('div');
+    item.className = 'preview-page-item';
+    item.dataset.pageIdx = i;
+    if (pdf.numPages > 1) {
+      const label = document.createElement('div');
+      label.className = 'preview-page-label';
+      label.textContent = `Page ${i} / ${pdf.numPages}`;
+      item.appendChild(label);
+    }
+    const canvas = document.createElement('canvas');
+    canvas.width = renderViewport.width;
+    canvas.height = renderViewport.height;
+    canvas.style.width = cssWidth + 'px';
+    canvas.style.height = cssHeight + 'px';
+    item.appendChild(canvas);
+    stack.appendChild(item);
+    previewState.pageEls.push(item);
+
+    await page.render({ canvasContext: canvas.getContext('2d'), viewport: renderViewport }).promise;
+  }
+
+  // observer
+  if (pdf.numPages > 1) {
+    setupPageObserver(pdf);
+  }
+}
+
+// サムネレール描画（初回のみ）
+async function renderThumbnailRail() {
+  const { pdf } = previewState;
+  if (!pdf) return;
+  previewThumbs.innerHTML = '';
+  if (pdf.numPages <= 1) return; // 1ページの時は出さない
+
+  const DPR = window.devicePixelRatio || 1;
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const page = await pdf.getPage(i);
+    const v1 = page.getViewport({ scale: 1 });
+    const thumbCssScale = 110 / v1.width;
+    const thumbRenderScale = thumbCssScale * DPR;
+    const viewport = page.getViewport({ scale: thumbRenderScale });
+
+    const thumb = document.createElement('div');
+    thumb.className = 'thumb-item';
+    thumb.dataset.pageIdx = i;
+    const canvas = document.createElement('canvas');
+    canvas.width = viewport.width;
+    canvas.height = viewport.height;
+    canvas.style.width = (v1.width * thumbCssScale) + 'px';
+    canvas.style.height = (v1.height * thumbCssScale) + 'px';
+    thumb.appendChild(canvas);
+    const label = document.createElement('div');
+    label.className = 'thumb-label';
+    label.textContent = i;
+    thumb.appendChild(label);
+    previewThumbs.appendChild(thumb);
+
+    await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+
+    thumb.addEventListener('click', () => {
+      const target = previewState.pageEls[i - 1];
+      if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  }
+  const firstThumb = previewThumbs.querySelector('.thumb-item');
+  if (firstThumb) firstThumb.classList.add('active');
+}
+
+function setupPageObserver(pdf) {
+  const pageInfoEl = document.getElementById('pageInfo');
+  let currentPage = 1;
+  pageObserver = new IntersectionObserver(entries => {
+    let bestEntry = null, bestRatio = 0;
+    entries.forEach(e => {
+      if (e.intersectionRatio > bestRatio) {
+        bestRatio = e.intersectionRatio;
+        bestEntry = e;
+      }
+    });
+    if (bestEntry && bestRatio > 0) {
+      const idx = Number(bestEntry.target.dataset.pageIdx);
+      if (idx !== currentPage) {
+        currentPage = idx;
+        if (pageInfoEl) pageInfoEl.textContent = `${idx} / ${pdf.numPages}`;
+        previewThumbs.querySelectorAll('.thumb-item').forEach(t => {
+          t.classList.toggle('active', Number(t.dataset.pageIdx) === idx);
+        });
+        const activeThumb = previewThumbs.querySelector('.thumb-item.active');
+        if (activeThumb) {
+          const tRect = activeThumb.getBoundingClientRect();
+          const cRect = previewThumbs.getBoundingClientRect();
+          if (tRect.top < cRect.top || tRect.bottom > cRect.bottom) {
+            activeThumb.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+          }
+        }
+      }
+    }
+  }, {
+    root: previewBody,
+    threshold: [0.1, 0.3, 0.5, 0.7],
+  });
+  previewState.pageEls.forEach(el => pageObserver.observe(el));
+
+  // ページ送りボタンの再バインド
+  const prevBtn = document.getElementById('prevPageBtn');
+  const nextBtn = document.getElementById('nextPageBtn');
+  if (prevBtn) {
+    prevBtn.onclick = () => {
+      const target = previewState.pageEls[Math.max(0, currentPage - 2)];
+      if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    };
+  }
+  if (nextBtn) {
+    nextBtn.onclick = () => {
+      const target = previewState.pageEls[Math.min(pdf.numPages - 1, currentPage)];
+      if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    };
+  }
+}
+
+async function showAttachmentPreview(key) {
+  const slot = slots[key];
+  if (!slot) { clearAttachmentPreview(); return; }
+  const docDef = DOCS.find(d => d.key === key);
+
+  if (pageObserver) { pageObserver.disconnect(); pageObserver = null; }
+
+  // ズームは新しいファイル表示時にリセット
+  previewZoom = 1.0;
+
+  previewHeaderTitle.innerHTML = `
+    <span class="ph-key">${docDef.no}．</span>
+    <span class="ph-name">${escapeHtml(slot.name)}</span>
+  `;
+  previewNav.innerHTML = '';
+  previewThumbs.innerHTML = '';
+  previewBody.innerHTML = '<div class="preview-loading">読み込み中...</div>';
+  previewContent.classList.remove('empty');
+
+  if (slot.type === 'image') {
+    previewContent.classList.add('single-page');
+    previewState = { key, pdf: null, pageEls: [], imgEl: null };
+    const blob = new Blob([slot.arrayBuffer], { type: slot.mime });
+    previewBody.innerHTML = '';
+    const stack = document.createElement('div');
+    stack.className = 'preview-pages-stack';
+    const item = document.createElement('div');
+    item.className = 'preview-page-item';
+    const img = document.createElement('img');
+    img.src = URL.createObjectURL(blob);
+    img.style.transformOrigin = 'top center';
+    img.style.transition = 'transform 0.15s';
+    item.appendChild(img);
+    stack.appendChild(item);
+    previewBody.appendChild(stack);
+    previewState.imgEl = img;
+    renderPreviewNav(false, 0);
+    return;
+  }
+
+  // PDF
+  let pdf = slot._pdfDoc;
+  if (!pdf) {
+    pdf = await pdfjsLib.getDocument({ data: slot.arrayBuffer.slice(0) }).promise;
+    slot._pdfDoc = pdf;
+    slot.pages = pdf.numPages;
+  }
+  previewState = { key, pdf, pageEls: [], imgEl: null };
+
+  if (pdf.numPages === 1) {
+    previewContent.classList.add('single-page');
+  } else {
+    previewContent.classList.remove('single-page');
+  }
+
+  previewBody.innerHTML = '';
+  const stack = document.createElement('div');
+  stack.className = 'preview-pages-stack';
+  previewBody.appendChild(stack);
+
+  // ナビ表示（ズーム＋ページ送り）
+  renderPreviewNav(pdf.numPages > 1, pdf.numPages);
+
+  // メイン描画
+  await redrawPreviewMain();
+
+  // サムネレール描画（複数ページ時のみ）
+  await renderThumbnailRail();
+}
+
+// ========== 公式PDFに○を打つ（最終出力用） ==========
+async function generateStampedPdf() {
+  if (!templatePdfBytes) throw new Error('公式PDF未読込');
+  const doc = await PDFDocument.load(templatePdfBytes);
+  const pages = doc.getPages();
+  DOCS.forEach(d => {
+    const isChecked = d.isTemplate
+      ? !!templatePdfBytes
+      : (checked[d.key] !== undefined ? checked[d.key] : !!slots[d.key]);
+    d.stampKey.forEach(k => {
+      const pos = STAMP_POSITIONS[k];
+      if (!pos) return;
+      const pageObj = pages[pos.pdfPageIdx];
+      if (!pageObj) return;
+      const x = isChecked ? STAMP_X_YES : STAMP_X_NO;
+      pageObj.drawCircle({
+        x, y: pos.y + 4,
+        size: STAMP_RADIUS,
+        borderColor: rgb(0.85, 0.15, 0.15),
+        borderWidth: 1.5,
+      });
+    });
+  });
+  return await doc.save();
+}
+
+// ========== 結合 ==========
+mergeBtn.addEventListener('click', async () => {
+  const applicant = applicantInput.value.trim();
+  const date = dateInput.value.trim();
+  if (!applicant) { setStatus('申請人氏名を入力してください', 'err'); applicantInput.focus(); return; }
+  if (!date) { setStatus('日付を入力してください', 'err'); dateInput.focus(); return; }
+
+  mergeBtn.disabled = true;
+  setStatus('結合中...', 'work');
+  try {
+    const merged = await PDFDocument.create();
+
+    if (templatePdfBytes) {
+      setStatus('公式PDFに○を描画中...', 'work');
+      const stamped = await generateStampedPdf();
+      const tDoc = await PDFDocument.load(stamped);
+      const pages = await merged.copyPages(tDoc, tDoc.getPageIndices());
+      pages.forEach(p => merged.addPage(p));
+    }
+
+    const filledDocs = DOCS.filter(d => slots[d.key] && !d.isTemplate);
+    for (let i = 0; i < filledDocs.length; i++) {
+      const docDef = filledDocs[i];
+      const f = slots[docDef.key];
+      setStatus(`結合中 (${i + 1}/${filledDocs.length}) No.${docDef.no}`, 'work');
+      if (f.type === 'pdf') {
+        const src = await PDFDocument.load(f.arrayBuffer.slice(0), { ignoreEncryption: true });
+        const pages = await merged.copyPages(src, src.getPageIndices());
+        pages.forEach(p => merged.addPage(p));
+      } else {
+        let img;
+        if (f.mime === 'image/jpeg' || f.mime === 'image/jpg') {
+          img = await merged.embedJpg(f.arrayBuffer.slice(0));
+        } else {
+          img = await merged.embedPng(f.arrayBuffer.slice(0));
+        }
+        const A4_W = 595.28, A4_H = 841.89;
+        const scale = Math.min(A4_W / img.width, A4_H / img.height);
+        const w = img.width * scale, h = img.height * scale;
+        const page = merged.addPage([A4_W, A4_H]);
+        page.drawImage(img, {
+          x: (A4_W - w) / 2, y: (A4_H - h) / 2,
+          width: w, height: h,
+        });
+      }
+    }
+
+    const bytes = await merged.save();
+    const blob = new Blob([bytes], { type: 'application/pdf' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${applicant}_${date}.pdf`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    setStatus(`✓ ${applicant}_${date}.pdf`, 'ok');
+  } catch (e) {
+    console.error(e);
+    setStatus(`エラー: ${e.message}`, 'err');
+  } finally {
+    mergeBtn.disabled = false;
+  }
+});
+
+// ========== ズーム制御 ==========
+const zoomInBtn = document.getElementById('zoomInBtn');
+const zoomOutBtn = document.getElementById('zoomOutBtn');
+const zoomFitBtn = document.getElementById('zoomFitBtn');
+const zoomDisplay = document.getElementById('zoomDisplay');
+const leftPaneEl = document.getElementById('leftPane');
+
+function updateZoomDisplay() {
+  zoomDisplay.textContent = `${Math.round(userZoom * 100)}%`;
+  zoomInBtn.disabled = userZoom >= ZOOM_MAX;
+  zoomOutBtn.disabled = userZoom <= ZOOM_MIN;
+}
+
+let zoomDebounce = null;
+function applyZoom() {
+  clearTimeout(zoomDebounce);
+  zoomDebounce = setTimeout(async () => {
+    if (templatePdfBytes) await renderTemplatePdf();
+  }, 80);
+}
+
+zoomInBtn.addEventListener('click', () => {
+  userZoom = Math.min(ZOOM_MAX, userZoom + ZOOM_STEP);
+  updateZoomDisplay();
+  applyZoom();
+});
+zoomOutBtn.addEventListener('click', () => {
+  userZoom = Math.max(ZOOM_MIN, userZoom - ZOOM_STEP);
+  updateZoomDisplay();
+  applyZoom();
+});
+zoomFitBtn.addEventListener('click', () => {
+  userZoom = 1.0;
+  updateZoomDisplay();
+  applyZoom();
+});
+
+// Ctrl + ホイールでズーム
+leftPaneEl.addEventListener('wheel', e => {
+  if (e.ctrlKey || e.metaKey) {
+    e.preventDefault();
+    const delta = e.deltaY < 0 ? ZOOM_STEP : -ZOOM_STEP;
+    userZoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, userZoom + delta));
+    updateZoomDisplay();
+    applyZoom();
+  }
+}, { passive: false });
+
+// 右ペインも Ctrl + ホイールでズーム
+previewBody.addEventListener('wheel', e => {
+  if (e.ctrlKey || e.metaKey) {
+    e.preventDefault();
+    if (!previewState.key) return;
+    const delta = e.deltaY < 0 ? PREVIEW_ZOOM_STEP : -PREVIEW_ZOOM_STEP;
+    previewZoom = Math.max(PREVIEW_ZOOM_MIN, Math.min(PREVIEW_ZOOM_MAX, previewZoom + delta));
+    const d = document.getElementById('prevZoomDisplay');
+    if (d) d.textContent = `${Math.round(previewZoom * 100)}%`;
+    // 画像なら即時、PDFなら debounce
+    const slot = slots[previewState.key];
+    if (slot && slot.type === 'image' && previewState.imgEl) {
+      previewState.imgEl.style.transform = `scale(${previewZoom})`;
+    } else {
+      rerenderPreviewPages();
+    }
+  }
+}, { passive: false });
+
+// ========== 左右リサイザー ==========
+(function setupResizer() {
+  const resizer = document.getElementById('resizer');
+  const main = document.querySelector('.main');
+  if (!resizer || !main) return;
+
+  let isDragging = false;
+  let dragStartX = 0;
+  let dragStartLeftWidth = 0;
+
+  // ローカルストレージから前回値を復元
+  const saved = localStorage.getItem('scanMergerSplit');
+  if (saved) {
+    main.style.setProperty('--split-left', saved);
+  }
+
+  resizer.addEventListener('mousedown', e => {
+    isDragging = true;
+    dragStartX = e.clientX;
+    const leftEl = document.getElementById('leftPane');
+    dragStartLeftWidth = leftEl.getBoundingClientRect().width;
+    resizer.classList.add('dragging');
+    document.body.classList.add('resizing');
+    e.preventDefault();
+  });
+
+  document.addEventListener('mousemove', e => {
+    if (!isDragging) return;
+    const dx = e.clientX - dragStartX;
+    const mainWidth = main.getBoundingClientRect().width;
+    const newLeftPx = dragStartLeftWidth + dx;
+    // 最小200px、最大は全体の85%
+    const minPx = 280;
+    const maxPx = mainWidth - 320; // 右側にも最低320px
+    const clamped = Math.max(minPx, Math.min(maxPx, newLeftPx));
+    const percent = (clamped / mainWidth) * 100;
+    main.style.setProperty('--split-left', percent + '%');
+  });
+
+  document.addEventListener('mouseup', () => {
+    if (!isDragging) return;
+    isDragging = false;
+    resizer.classList.remove('dragging');
+    document.body.classList.remove('resizing');
+    // 保存
+    const v = main.style.getPropertyValue('--split-left');
+    if (v) localStorage.setItem('scanMergerSplit', v);
+
+    // 左右両ペインの再描画（幅変更でズーム基準が変わるため）
+    if (templatePdfBytes) renderTemplatePdf();
+    if (previewState && previewState.key) redrawPreviewMain();
+  });
+
+  // ダブルクリックでデフォルトに戻す
+  resizer.addEventListener('dblclick', () => {
+    main.style.setProperty('--split-left', '60%');
+    localStorage.setItem('scanMergerSplit', '60%');
+    if (templatePdfBytes) renderTemplatePdf();
+    if (previewState && previewState.key) redrawPreviewMain();
+  });
+})();
+
+// リサイズ時にレイアウト再計算
+let resizeTimer;
+window.addEventListener('resize', () => {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(async () => {
+    if (templatePdfBytes) await renderTemplatePdf();
+  }, 250);
+});
+
+function setStatus(msg, type) {
+  statusEl.textContent = msg;
+  statusEl.className = 'status-msg ' + (type || '');
+}
+function formatSize(bytes) {
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+  return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+}
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+updateSummary();
+</script>
+</body>
+</html>
