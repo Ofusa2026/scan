@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- SCAN_VERSION ver.20260518.06 -->
+<!-- SCAN_VERSION ver.20260518.07 -->
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
@@ -509,7 +509,7 @@
 <div class="app">
   <header>
     <div>
-      <h1>入管提出書類　スキャン結合<span class="h1-sub">特定技能１号・在留資格認定証明書交付申請　第１表</span><span class="h1-version" id="appVersion">ver.20260518.06</span></h1>
+      <h1>入管提出書類　スキャン結合<span class="h1-sub">特定技能１号・在留資格認定証明書交付申請　第１表</span><span class="h1-version" id="appVersion">ver.20260518.07</span></h1>
     </div>
     <div style="font-size:11px;color:var(--sub);" id="dateDisplay"></div>
   </header>
@@ -604,7 +604,7 @@
 
 <script>
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-const SCAN_VERSION = 'ver.20260518.06';
+const SCAN_VERSION = 'ver.20260518.07';
 console.log(`[scan-merger] ${SCAN_VERSION}`);
 const { PDFDocument, rgb } = PDFLib;
 
@@ -640,8 +640,6 @@ const STAMP_POSITIONS = {
 
 // UI項目（入管庁番号と一致）
 const DOCS = [
-  { no: 1,   noLabel: '1',   key: 'envelope',            short: '返信用封筒',                    stampKey: [1]    },
-  { no: 2,   noLabel: '2',   key: 'name_list',           short: '申請人名簿',                    stampKey: [2]    },
   { no: 3,   noLabel: '3',   key: 'cover_list',          short: '一覧表(本PDF)',                stampKey: [3], isTemplate: true },
   { no: 4,   noLabel: '4',   key: 'application_form',    short: '認定証明書交付申請書',           stampKey: [4]    },
   // 5を細分化
