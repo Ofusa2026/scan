@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- SCAN_VERSION ver.20260518.07 -->
+<!-- SCAN_VERSION ver.20260518.08 -->
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
@@ -509,7 +509,7 @@
 <div class="app">
   <header>
     <div>
-      <h1>入管提出書類　スキャン結合<span class="h1-sub">特定技能１号・在留資格認定証明書交付申請　第１表</span><span class="h1-version" id="appVersion">ver.20260518.07</span></h1>
+      <h1>入管提出書類　スキャン結合<span class="h1-sub">特定技能１号・在留資格認定証明書交付申請　第１表</span><span class="h1-version" id="appVersion">ver.20260518.08</span></h1>
     </div>
     <div style="font-size:11px;color:var(--sub);" id="dateDisplay"></div>
   </header>
@@ -517,8 +517,12 @@
   <!-- 設定バー -->
   <div class="toolbar">
     <div class="group">
-      <button class="btn-tool" id="loadTemplateBtn">📄 公式PDFを読込</button>
-      <span class="status-msg" id="templateStatusMsg">未読込</span>
+      <label>テンプレ</label>
+      <select id="templateSelect" style="padding:5px 8px;border:1px solid var(--line);background:#fafaf7;font-size:12px;font-family:'Hiragino Sans','Yu Gothic',sans-serif;max-width:340px;">
+        <option value="">読み込み中...</option>
+      </select>
+      <button class="btn-tool" id="loadTemplateBtn" title="ローカルPDFをアップロード">📂</button>
+      <span class="status-msg" id="templateStatusMsg"></span>
     </div>
     <div class="divider"></div>
     <div class="group">
@@ -604,64 +608,40 @@
 
 <script>
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-const SCAN_VERSION = 'ver.20260518.07';
+const SCAN_VERSION = 'ver.20260518.08';
 console.log(`[scan-merger] ${SCAN_VERSION}`);
 const { PDFDocument, rgb } = PDFLib;
 
 /* ============================================================
- * 公式PDFの座標マッピング
- * y は pdf-lib 座標系（下端基準）
- * 公式PDF全体は7ページ。第1表は pdfPageIdx 1, 2（0-indexed）
+ * テンプレ依存の座標・項目定義（templates.jsonから動的にロード）
+ * STAMP_X_YES / STAMP_X_NO / STAMP_RADIUS / STAMP_POSITIONS / DOCS / COVER_FIELDS
+ * を、選択中テンプレに応じて入れ替える。
  * ============================================================ */
-const STAMP_X_YES = 425;
-const STAMP_X_NO  = 441;
-const STAMP_RADIUS = 8;
+let STAMP_X_YES = 425;
+let STAMP_X_NO  = 441;
+let STAMP_RADIUS = 8;
+let STAMP_POSITIONS = {};
+let DOCS = [];
+let COVER_FIELDS = {}; // { applicant: {x,y,pdfPageIdx}, org: {x,y,pdfPageIdx} }
+let templatesCatalog = []; // templates.json の templates 配列
+let currentTemplate = null; // 選択中テンプレ
 
-const STAMP_POSITIONS = {
-  1:  { pdfPageIdx: 1, y: 716.3 },
-  2:  { pdfPageIdx: 1, y: 677.0 },
-  3:  { pdfPageIdx: 1, y: 637.1 },
-  4:  { pdfPageIdx: 1, y: 591.7 },
-  5:  { pdfPageIdx: 1, y: 546.2 },
-  '5b':{ pdfPageIdx: 1, y: 489.3 },
-  6:  { pdfPageIdx: 1, y: 443.8 },
-  7:  { pdfPageIdx: 1, y: 421.0 },
-  '7b':{ pdfPageIdx: 1, y: 398.2 },
-  '7c':{ pdfPageIdx: 1, y: 369.8 },
-  '7d':{ pdfPageIdx: 1, y: 335.7 },
-  8:  { pdfPageIdx: 1, y: 284.4 },
-  '9a':{ pdfPageIdx: 1, y: 216.1 },
-  '9b':{ pdfPageIdx: 1, y: 159.2 },
-  10: { pdfPageIdx: 1, y: 125.2 },
-  '10b':{ pdfPageIdx: 1, y: 99.8 },
-  11: { pdfPageIdx: 1, y: 74.5 },
-  12: { pdfPageIdx: 2, y: 723.6 },
-};
-
-// UI項目（入管庁番号と一致）
-const DOCS = [
-  { no: 3,   noLabel: '3',   key: 'cover_list',          short: '一覧表(本PDF)',                stampKey: [3], isTemplate: true },
-  { no: 4,   noLabel: '4',   key: 'application_form',    short: '認定証明書交付申請書',           stampKey: [4]    },
-  // 5を細分化
-  { no: 5,   noLabel: '5(1)',key: 'reward_explanation',  short: '報酬説明書',                    stampKey: [5]    },
-  { no: 5,   noLabel: '5(2)',key: 'wage_rule',           short: '賃金規程の写し',                stampKey: ['5b'] },
-  { no: 6,   noLabel: '6',   key: 'employment_contract', short: '雇用契約書',                    stampKey: [6]    },
-  // 7を細分化
-  { no: 7,   noLabel: '7(1)',key: 'work_condition_1',    short: '雇用条件書の写し',              stampKey: [7]    },
-  { no: 7,   noLabel: '7(2)',key: 'work_condition_2',    short: '賃金の支払の写し',              stampKey: ['7b'] },
-  { no: 7,   noLabel: '7(3)',key: 'work_condition_3',    short: '年間カレンダー',                stampKey: ['7c'] },
-  { no: 7,   noLabel: '7(4)',key: 'work_condition_4',    short: '変形労働時間制協定',            stampKey: ['7d'] },
-  { no: 8,   noLabel: '8',   key: 'support_plan',        short: '支援計画書',                    stampKey: [8]    },
-  // 9を細分化
-  { no: 9,   noLabel: '9(1)',key: 'employment_route_1',  short: '雇用の経緯説明書',              stampKey: ['9a'] },
-  { no: 9,   noLabel: '9(2)',key: 'employment_route_2',  short: '職業紹介事業者画面',            stampKey: ['9b'] },
-  // 10を細分化
-  { no: 10,  noLabel: '10(1)',key: 'health_check_1',     short: '健康診断個人票',                stampKey: [10]   },
-  { no: 10,  noLabel: '10(2)',key: 'health_check_2',     short: '受診者の申告書',                stampKey: ['10b']},
-  { no: 11,  noLabel: '11',  key: 'guidance_confirm',    short: '事前ガイダンス確認書',           stampKey: [11]   },
-  { no: 12,  noLabel: '12',  key: 'support_commission',  short: '支援委託契約説明書',             stampKey: [12]   },
-];
-
+// テンプレを反映してDOCSなどを更新
+function applyTemplate(tmpl) {
+  currentTemplate = tmpl;
+  STAMP_X_YES = tmpl.stampX?.yes ?? 425;
+  STAMP_X_NO  = tmpl.stampX?.no  ?? 441;
+  STAMP_RADIUS = tmpl.stampRadius ?? 8;
+  STAMP_POSITIONS = tmpl.stampPositions || {};
+  DOCS = (tmpl.docs || []).map(d => ({ ...d, stampKey: d.stampKey.map(String) }));
+  COVER_FIELDS = tmpl.coverFields || {};
+  // 状態リセット
+  for (const k in slots) delete slots[k];
+  for (const k in checked) delete checked[k];
+  for (const k in manualStamps) delete manualStamps[k];
+  selectedKey = null;
+  document.getElementById('totalCount').textContent = DOCS.length;
+}
 // 状態
 const slots = {};       // key → ファイル
 const checked = {};     // key → bool（手動チェック）
@@ -717,7 +697,71 @@ const previewBody = document.getElementById('previewBody');
 const previewThumbs = document.getElementById('previewThumbs');
 const previewContent = document.getElementById('previewContent');
 
-// 公式PDF読込
+// ========== テンプレカタログ読込（templates.json） ==========
+const templateSelect = document.getElementById('templateSelect');
+
+async function loadTemplatesCatalog() {
+  try {
+    const res = await fetch('templates/templates.json', { cache: 'no-cache' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    templatesCatalog = data.templates || [];
+    // セレクトに反映
+    templateSelect.innerHTML = '';
+    if (templatesCatalog.length === 0) {
+      templateSelect.innerHTML = '<option value="">テンプレ未登録</option>';
+      return;
+    }
+    templateSelect.innerHTML = '<option value="">— テンプレを選択 —</option>'
+      + templatesCatalog.map(t => `<option value="${escapeHtml(t.id)}">${escapeHtml(t.name)}</option>`).join('');
+
+    // 前回選択を復元
+    const lastId = localStorage.getItem('scanLastTemplate');
+    if (lastId && templatesCatalog.some(t => t.id === lastId)) {
+      templateSelect.value = lastId;
+      await loadTemplateById(lastId);
+    } else if (templatesCatalog.length === 1) {
+      // 1つしかなければ自動選択
+      templateSelect.value = templatesCatalog[0].id;
+      await loadTemplateById(templatesCatalog[0].id);
+    }
+  } catch (err) {
+    console.error('templates.json読込失敗:', err);
+    templateSelect.innerHTML = '<option value="">読込失敗</option>';
+    setStatus('テンプレ一覧の読込失敗: ' + err.message, 'err');
+  }
+}
+
+async function loadTemplateById(id) {
+  const tmpl = templatesCatalog.find(t => t.id === id);
+  if (!tmpl) return;
+  try {
+    setStatus(`テンプレ読込中: ${tmpl.name}...`, 'work');
+    templateStatusMsg.innerHTML = '';
+    // PDF取得
+    const res = await fetch(tmpl.pdfPath, { cache: 'no-cache' });
+    if (!res.ok) throw new Error(`PDF取得失敗 HTTP ${res.status}`);
+    const ab = await res.arrayBuffer();
+    templatePdfBytes = new Uint8Array(ab);
+    // テンプレ定義を反映
+    applyTemplate(tmpl);
+    templateStatusMsg.innerHTML = `<strong style="color:var(--ok);">✓ ${escapeHtml(tmpl.name)}</strong>`;
+    localStorage.setItem('scanLastTemplate', tmpl.id);
+    await renderTemplatePdf();
+    setStatus('', '');
+    updateSummary();
+  } catch (err) {
+    console.error(err);
+    setStatus(`テンプレ読込エラー: ${err.message}`, 'err');
+  }
+}
+
+templateSelect.addEventListener('change', e => {
+  const id = e.target.value;
+  if (id) loadTemplateById(id);
+});
+
+// 手動アップロード（フォルダアイコン）
 loadTemplateBtn.addEventListener('click', () => templateFileInput.click());
 templateFileInput.addEventListener('change', async e => {
   const file = e.target.files[0];
@@ -726,8 +770,22 @@ templateFileInput.addEventListener('change', async e => {
     setStatus('PDF読込中...', 'work');
     const ab = await file.arrayBuffer();
     templatePdfBytes = new Uint8Array(ab);
-    templateStatusMsg.innerHTML = `<strong style="color:var(--ok);">✓ ${escapeHtml(file.name)}</strong>`;
-    loadTemplateBtn.textContent = '📄 別のPDFに変更';
+    // 手動アップロード時はカタログから最も近そうなテンプレ定義を流用
+    // （ファイル名がテンプレ名と一致するならそれを使う、なければ最初のテンプレを使う）
+    let tmpl = null;
+    if (templatesCatalog.length > 0) {
+      // ファイル名に一致するテンプレを探す
+      tmpl = templatesCatalog.find(t => file.name.includes(t.id))
+          || templatesCatalog.find(t => t.pdfPath.includes(file.name))
+          || templatesCatalog[0];
+    }
+    if (tmpl) {
+      applyTemplate(tmpl);
+      templateStatusMsg.innerHTML = `<strong style="color:var(--warn);">⚠ ${escapeHtml(file.name)}（座標は「${escapeHtml(tmpl.name)}」のものを使用）</strong>`;
+    } else {
+      templateStatusMsg.innerHTML = `<strong style="color:var(--err);">✗ テンプレ定義がありません</strong>`;
+      return;
+    }
     await renderTemplatePdf();
     setStatus('', '');
     updateSummary();
@@ -951,26 +1009,27 @@ async function drawStampsOnCanvas() {
     });
 
     // 表紙ページに申請人氏名・所属機関名を描画（プレビュー用）
-    if (i === 0) {
-      const applicant = applicantInput.value.trim();
-      const org = orgInput.value.trim();
-      if (applicant || org) {
-        const fontSize = 12 * info.renderScale;
-        ctx.font = `${fontSize}px "Hiragino Sans", "Yu Gothic", "Noto Sans JP", sans-serif`;
-        ctx.fillStyle = 'rgba(20, 20, 20, 0.95)';
-        ctx.textBaseline = 'alphabetic';
-        // PDF座標 y=106（申請人）, y=71（所属機関）
-        // canvas座標: (pdfHeight - y) * scale
-        if (applicant) {
-          const cx = 290 * info.renderScale;
-          const cy = (info.pdfHeight - 106) * info.renderScale;
-          ctx.fillText(applicant, cx, cy);
-        }
-        if (org) {
-          const cx = 290 * info.renderScale;
-          const cy = (info.pdfHeight - 71) * info.renderScale;
-          ctx.fillText(org, cx, cy);
-        }
+    // COVER_FIELDS から座標を取る
+    const applicantField = COVER_FIELDS.applicant;
+    const orgField = COVER_FIELDS.org;
+    const applicant = applicantInput.value.trim();
+    const org = orgInput.value.trim();
+    if ((applicant || org) && (applicantField || orgField)) {
+      ctx.fillStyle = 'rgba(20, 20, 20, 0.95)';
+      ctx.textBaseline = 'alphabetic';
+      if (applicant && applicantField && (applicantField.pdfPageIdx ?? 0) === i) {
+        const size = (applicantField.size || 12) * info.renderScale;
+        ctx.font = `${size}px "Hiragino Sans", "Yu Gothic", "Noto Sans JP", sans-serif`;
+        const cx = applicantField.x * info.renderScale;
+        const cy = (info.pdfHeight - applicantField.y) * info.renderScale;
+        ctx.fillText(applicant, cx, cy);
+      }
+      if (org && orgField && (orgField.pdfPageIdx ?? 0) === i) {
+        const size = (orgField.size || 12) * info.renderScale;
+        ctx.font = `${size}px "Hiragino Sans", "Yu Gothic", "Noto Sans JP", sans-serif`;
+        const cx = orgField.x * info.renderScale;
+        const cy = (info.pdfHeight - orgField.y) * info.renderScale;
+        ctx.fillText(org, cx, cy);
       }
     }
   }
@@ -1484,28 +1543,34 @@ async function generateStampedPdf() {
 
   const pages = doc.getPages();
 
-  // 表紙ページ（page 0）に申請人氏名・所属機関名を記入
-  if (jpFont && pages[0]) {
+  // 表紙ページに申請人氏名・所属機関名を記入
+  // テンプレ定義の COVER_FIELDS から座標を取る
+  if (jpFont) {
     const applicant = applicantInput.value.trim();
     const org = orgInput.value.trim();
-    const cover = pages[0];
-    // 下線の上に書く（下線位置は y=102.2 / 67.7、x=285.8〜559.2）
-    // 文字ベースラインは下線より少し上（+3pt程度）
-    if (applicant) {
-      cover.drawText(applicant, {
-        x: 290, y: 106,
-        size: 12,
-        font: jpFont,
-        color: rgb(0.1, 0.1, 0.1),
-      });
+    if (applicant && COVER_FIELDS.applicant) {
+      const f = COVER_FIELDS.applicant;
+      const coverPage = pages[f.pdfPageIdx ?? 0];
+      if (coverPage) {
+        coverPage.drawText(applicant, {
+          x: f.x, y: f.y,
+          size: f.size || 12,
+          font: jpFont,
+          color: rgb(0.1, 0.1, 0.1),
+        });
+      }
     }
-    if (org) {
-      cover.drawText(org, {
-        x: 290, y: 71,
-        size: 12,
-        font: jpFont,
-        color: rgb(0.1, 0.1, 0.1),
-      });
+    if (org && COVER_FIELDS.org) {
+      const f = COVER_FIELDS.org;
+      const coverPage = pages[f.pdfPageIdx ?? 0];
+      if (coverPage) {
+        coverPage.drawText(org, {
+          x: f.x, y: f.y,
+          size: f.size || 12,
+          font: jpFont,
+          color: rgb(0.1, 0.1, 0.1),
+        });
+      }
     }
   }
 
@@ -1790,6 +1855,8 @@ function escapeHtml(s) {
 }
 
 updateSummary();
+// テンプレカタログ自動ロード
+loadTemplatesCatalog();
 </script>
 </body>
 </html>
