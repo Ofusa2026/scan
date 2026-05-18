@@ -1,4 +1,5 @@
 <!DOCTYPE html>
+<!-- SCAN_VERSION ver.20260518.03 -->
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
@@ -44,6 +45,17 @@
     font-size: 11px; color: var(--sub);
     margin-left: 12px; font-weight: normal;
     font-family: "Hiragino Sans", "Yu Gothic", sans-serif;
+  }
+  h1 .h1-version {
+    font-size: 10px; color: var(--sub);
+    margin-left: 10px; font-weight: normal;
+    font-family: "SF Mono", "Menlo", monospace;
+    letter-spacing: 0.05em;
+    padding: 1px 7px;
+    border: 1px solid var(--line);
+    background: var(--paper);
+    color: var(--accent);
+    vertical-align: middle;
   }
 
   /* 設定バー */
@@ -496,7 +508,7 @@
 <div class="app">
   <header>
     <div>
-      <h1>入管提出書類　スキャン結合<span class="h1-sub">特定技能１号・在留資格認定証明書交付申請　第１表</span></h1>
+      <h1>入管提出書類　スキャン結合<span class="h1-sub">特定技能１号・在留資格認定証明書交付申請　第１表</span><span class="h1-version" id="appVersion">ver.20260518.03</span></h1>
     </div>
     <div style="font-size:11px;color:var(--sub);" id="dateDisplay"></div>
   </header>
@@ -591,6 +603,8 @@
 
 <script>
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+const SCAN_VERSION = 'ver.20260518.03';
+console.log(`[scan-merger] ${SCAN_VERSION}`);
 const { PDFDocument, rgb } = PDFLib;
 
 /* ============================================================
