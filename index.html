@@ -510,9 +510,9 @@
     <div class="divider"></div>
     <div class="group">
       <label>case_id</label>
-      <input type="text" id="caseIdInput" placeholder="case_xxxxx" style="width:160px;">
-      <button class="btn-tool" id="fetchCaseBtn" title="拡張機能経由でDBから取得">取込</button>
-      <span class="status-msg" id="caseFetchStatus"></span>
+      <input type="text" id="caseIdInput" placeholder="サイドパネルから送信 or 手入力" style="width:230px;" readonly>
+      <button class="btn-tool" id="clearCaseBtn" title="クリア">×</button>
+      <span class="status-msg" id="caseFetchStatus">サイドパネル「スキャン結合へ送信」を待機中</span>
     </div>
     <div class="divider"></div>
     <div class="group">
@@ -670,7 +670,6 @@ const dateInput = document.getElementById('dateField');
 const filledCountEl = document.getElementById('filledCount');
 const checkedCountEl = document.getElementById('checkedCount');
 const caseIdInput = document.getElementById('caseIdInput');
-const fetchCaseBtn = document.getElementById('fetchCaseBtn');
 const caseFetchStatus = document.getElementById('caseFetchStatus');
 
 const previewHeaderTitle = document.getElementById('previewHeaderTitle');
@@ -1486,133 +1485,47 @@ mergeBtn.addEventListener('click', async () => {
   }
 });
 
-// ========== OFUSA拡張機能経由でcase取込 ==========
-// 拡張機能ID（manifest.jsonのkeyから決定的に生成される固定ID）
-// 値が分からない場合はユーザーに入力してもらう
-const OFUSA_EXT_ID_DEFAULT = 'doaeoeenfaffapidaocjkpkdgpdpdmoa'; // 暫定値（実IDは要確認）
-function getExtId() {
-  try {
-    return localStorage.getItem('ofusaExtId') || OFUSA_EXT_ID_DEFAULT;
-  } catch (e) {
-    return OFUSA_EXT_ID_DEFAULT;
-  }
-}
-function setExtId(id) {
-  try { localStorage.setItem('ofusaExtId', id); } catch (e) {}
-}
+// ========== OFUSA拡張機能（サイドパネル）からのデータ受信 ==========
+// サイドパネル側で「スキャン結合へ送信」ボタンを押すと、
+// chrome.scripting.executeScript で window.postMessage が発火する。
+// それを window.message イベントで受け取って氏名・社名をセットする。
 
 function setCaseFetchStatus(msg, type) {
   caseFetchStatus.textContent = msg;
   caseFetchStatus.className = 'status-msg ' + (type || '');
 }
 
-function sendToExtension(message, timeoutMs = 15000) {
-  return new Promise((resolve, reject) => {
-    if (typeof chrome === 'undefined' || !chrome.runtime || !chrome.runtime.sendMessage) {
-      reject(new Error('Chrome拡張APIが利用できません（Chromeまたは拡張機能未インストール）'));
-      return;
-    }
-    let done = false;
-    const timer = setTimeout(() => {
-      if (done) return;
-      done = true;
-      reject(new Error('拡張機能が応答しません（タイムアウト）'));
-    }, timeoutMs);
-    try {
-      chrome.runtime.sendMessage(getExtId(), message, response => {
-        if (done) return;
-        done = true;
-        clearTimeout(timer);
-        const lastErr = chrome.runtime.lastError;
-        if (lastErr) {
-          reject(new Error(lastErr.message || '拡張機能との通信失敗'));
-          return;
-        }
-        resolve(response);
-      });
-    } catch (err) {
-      if (done) return;
-      done = true;
-      clearTimeout(timer);
-      reject(err);
-    }
-  });
-}
+window.addEventListener('message', (event) => {
+  // origin/source は同じwindow内（executeScriptは同オリジン扱い）
+  const data = event.data;
+  if (!data || typeof data !== 'object') return;
+  if (data.type !== 'ofusa-case-data') return;
 
-fetchCaseBtn.addEventListener('click', async () => {
-  const caseId = caseIdInput.value.trim();
-  if (!caseId) {
-    setCaseFetchStatus('case_id を入力してください', 'err');
-    caseIdInput.focus();
-    return;
-  }
-  fetchCaseBtn.disabled = true;
-  setCaseFetchStatus('取得中...', 'work');
-  try {
-    let res;
-    try {
-      res = await sendToExtension({ type: 'get-case-bundle', caseId });
-    } catch (err) {
-      // 拡張機能との通信失敗時 → IDを聞く
-      const newId = prompt(
-        '拡張機能に到達できません。\n' +
-        'OFUSA入管自動入力 拡張機能のIDを入力してください。\n\n' +
-        '(chrome://extensions で確認できます)',
-        getExtId()
-      );
-      if (!newId) throw err;
-      setExtId(newId.trim());
-      setCaseFetchStatus('再試行中...', 'work');
-      res = await sendToExtension({ type: 'get-case-bundle', caseId });
-    }
-    if (!res || !res.ok) {
-      throw new Error(res?.reason || '取得失敗');
-    }
-    const b = res.bundle || {};
-    // 申請人氏名
-    let applicant = '';
-    if (b.persons) {
-      applicant = b.persons.name || b.persons.applicantName || '';
-    }
-    if (!applicant && b.cases) {
-      applicant = b.cases.applicant || b.cases.applicantName || '';
-    }
-    // 所属機関名
-    let org = '';
-    if (b.companies) {
-      org = b.companies.name || '';
-    }
-    if (!org && b.cases) {
-      org = b.cases.company || '';
-    }
+  const p = data.payload || {};
+  const applicant = (p.applicant || '').trim();
+  const org = (p.org || '').trim();
+  const caseId = (p.caseId || '').trim();
 
-    if (applicant) applicantInput.value = applicant;
-    if (org) orgInput.value = org;
-    // プレビュー更新
-    scheduleCoverRedraw();
+  if (caseId) caseIdInput.value = caseId;
+  if (applicant) applicantInput.value = applicant;
+  if (org) orgInput.value = org;
 
-    const errs = b.errors || [];
-    if (applicant || org) {
-      let msg = `✓ 取得完了`;
-      if (errs.length) msg += `（一部エラー${errs.length}件）`;
-      setCaseFetchStatus(msg, 'ok');
-    } else {
-      setCaseFetchStatus('データが空でした（case_id を確認してください）', 'err');
-    }
-  } catch (err) {
-    console.error(err);
-    setCaseFetchStatus(`エラー: ${err.message}`, 'err');
-  } finally {
-    fetchCaseBtn.disabled = false;
+  scheduleCoverRedraw();
+
+  if (applicant || org) {
+    setCaseFetchStatus(`✓ 受信: ${applicant}${org ? ' / ' + org : ''}`, 'ok');
+  } else {
+    setCaseFetchStatus('受信したがデータが空です', 'err');
   }
 });
 
-// Enter押下でも取得
-caseIdInput.addEventListener('keydown', e => {
-  if (e.key === 'Enter') {
-    e.preventDefault();
-    fetchCaseBtn.click();
-  }
+// クリアボタン
+document.getElementById('clearCaseBtn').addEventListener('click', () => {
+  caseIdInput.value = '';
+  applicantInput.value = '';
+  orgInput.value = '';
+  setCaseFetchStatus('クリアしました', '');
+  scheduleCoverRedraw();
 });
 
 // ========== ズーム制御 ==========
