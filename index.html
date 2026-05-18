@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- SCAN_VERSION ver.20260519.01 -->
+<!-- SCAN_VERSION ver.20260519.02 -->
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
@@ -509,7 +509,7 @@
 <div class="app">
   <header>
     <div>
-      <h1>入管提出書類　スキャン結合<span class="h1-sub">特定技能１号・在留資格認定証明書交付申請　第１表</span><span class="h1-version" id="appVersion">ver.20260519.01</span></h1>
+      <h1>入管提出書類　スキャン結合<span class="h1-sub">特定技能１号・在留資格認定証明書交付申請　第１表</span><span class="h1-version" id="appVersion">ver.20260519.02</span></h1>
     </div>
     <div style="font-size:11px;color:var(--sub);" id="dateDisplay"></div>
   </header>
@@ -548,7 +548,7 @@
       <span>チェック <strong id="checkedCount">0</strong>/<span id="totalCount">12</span></span>
       <span>ファイル <strong id="filledCount">0</strong>件</span>
       <span class="status-msg" id="status"></span>
-      <button class="btn-tool primary" id="mergeBtn" disabled>結合してダウンロード</button>
+      <button class="btn-tool primary" id="mergeBtn" disabled>ファイルをアップしてください</button>
     </div>
   </div>
 
@@ -608,7 +608,7 @@
 
 <script>
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-const SCAN_VERSION = 'ver.20260519.01';
+const SCAN_VERSION = 'ver.20260519.02';
 console.log(`[scan-merger] ${SCAN_VERSION}`);
 const { PDFDocument, rgb } = PDFLib;
 
@@ -810,6 +810,7 @@ function scheduleCoverRedraw() {
   clearTimeout(coverInputDebounce);
   coverInputDebounce = setTimeout(() => {
     if (templatePdfBytes && templatePdfJs) drawStampsOnCanvas();
+    scheduleMergeRebuild();
   }, 200);
 }
 applicantInput.addEventListener('input', scheduleCoverRedraw);
@@ -928,23 +929,22 @@ function handleStampCanvasClick(e) {
   if (!hit) return;
   e.preventDefault();
   e.stopPropagation();
-  // 「有」または「無」を手動でセット
-  // すでに同じ手動値なら自動に戻す
   if (manualStamps[hit.stampKey] === hit.mark) {
     delete manualStamps[hit.stampKey];
   } else {
     manualStamps[hit.stampKey] = hit.mark;
   }
   drawStampsOnCanvas();
+  scheduleMergeRebuild();
 }
 
 function handleStampCanvasContextMenu(e) {
   const hit = findHitArea(e);
   if (!hit) return;
   e.preventDefault();
-  // 右クリックで自動に戻す
   delete manualStamps[hit.stampKey];
   drawStampsOnCanvas();
+  scheduleMergeRebuild();
 }
 
 // Canvas に「有・無」の○を描画（高解像度対応）
@@ -1193,7 +1193,9 @@ function updateSummary() {
     }
   });
   checkedCountEl.textContent = chk;
-  mergeBtn.disabled = filled === 0 && !templatePdfBytes;
+  // 状態反映＋裏結合トリガ
+  updateMergeBtnState();
+  scheduleMergeRebuild();
 }
 
 // ========== 右ペイン：添付ファイルプレビュー（全ページスクロール + サムネレール + ズーム） ==========
@@ -1594,31 +1596,46 @@ async function generateStampedPdf() {
   return await doc.save();
 }
 
-// ========== 結合 ==========
-mergeBtn.addEventListener('click', async () => {
-  const applicant = applicantInput.value.trim();
-  const date = dateInput.value.trim();
-  if (!applicant) { setStatus('申請人氏名を入力してください', 'err'); applicantInput.focus(); return; }
-  if (!date) { setStatus('日付を入力してください', 'err'); dateInput.focus(); return; }
+// ========== 自動結合（バックグラウンド） ==========
+// slots や チェック状態が変わるたびに、裏で結合PDFを再生成して mergedPdfBytes に保持。
+// ユーザーは「ダウンロード」を押すだけで即保存できる。
 
-  mergeBtn.disabled = true;
-  setStatus('結合中...', 'work');
+let mergedPdfBytes = null;      // 最新の結合PDFバイナリ
+let mergeInProgress = false;    // 結合中フラグ
+let mergeNeedsRerun = false;    // 結合中に変更があった場合のフラグ
+let mergeDebounceTimer = null;
+
+async function rebuildMergedPdf() {
+  if (mergeInProgress) {
+    mergeNeedsRerun = true;
+    return;
+  }
+  if (!templatePdfBytes && Object.keys(slots).length === 0) {
+    mergedPdfBytes = null;
+    updateMergeBtnState();
+    return;
+  }
+  mergeInProgress = true;
+  updateMergeBtnState();
+
   try {
     const merged = await PDFDocument.create();
 
+    // 1) 公式PDF（○・氏名・社名記入済み）
     if (templatePdfBytes) {
-      setStatus('公式PDFに○を描画中...', 'work');
+      setStatus('結合中: 公式PDF...', 'work');
       const stamped = await generateStampedPdf();
       const tDoc = await PDFDocument.load(stamped);
       const pages = await merged.copyPages(tDoc, tDoc.getPageIndices());
       pages.forEach(p => merged.addPage(p));
     }
 
+    // 2) 各書類（番号順）
     const filledDocs = DOCS.filter(d => slots[d.key] && !d.isTemplate);
     for (let i = 0; i < filledDocs.length; i++) {
       const docDef = filledDocs[i];
       const f = slots[docDef.key];
-      setStatus(`結合中 (${i + 1}/${filledDocs.length}) No.${docDef.no}`, 'work');
+      setStatus(`結合中: (${i + 1}/${filledDocs.length}) No.${docDef.noLabel || docDef.no}`, 'work');
       if (f.type === 'pdf') {
         const src = await PDFDocument.load(f.arrayBuffer.slice(0), { ignoreEncryption: true });
         const pages = await merged.copyPages(src, src.getPageIndices());
@@ -1641,23 +1658,61 @@ mergeBtn.addEventListener('click', async () => {
       }
     }
 
-    const bytes = await merged.save();
-    const blob = new Blob([bytes], { type: 'application/pdf' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${applicant}_${date}.pdf`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-    setStatus(`✓ ${applicant}_${date}.pdf`, 'ok');
+    mergedPdfBytes = await merged.save();
+    const totalPages = merged.getPageCount();
+    setStatus(`✓ 結合済み（${totalPages}p、${formatSize(mergedPdfBytes.byteLength)}）`, 'ok');
   } catch (e) {
-    console.error(e);
-    setStatus(`エラー: ${e.message}`, 'err');
+    console.error('結合エラー:', e);
+    mergedPdfBytes = null;
+    setStatus(`結合エラー: ${e.message}`, 'err');
   } finally {
-    mergeBtn.disabled = false;
+    mergeInProgress = false;
+    updateMergeBtnState();
+    if (mergeNeedsRerun) {
+      mergeNeedsRerun = false;
+      scheduleMergeRebuild();
+    }
   }
+}
+
+// debounce で連続変更を吸収
+function scheduleMergeRebuild() {
+  clearTimeout(mergeDebounceTimer);
+  mergeDebounceTimer = setTimeout(() => rebuildMergedPdf(), 250);
+}
+
+function updateMergeBtnState() {
+  if (mergeInProgress) {
+    mergeBtn.textContent = '結合中...';
+    mergeBtn.disabled = true;
+  } else if (mergedPdfBytes) {
+    const sizeStr = formatSize(mergedPdfBytes.byteLength);
+    mergeBtn.textContent = `⬇ ダウンロード (${sizeStr})`;
+    mergeBtn.disabled = false;
+  } else if (!templatePdfBytes) {
+    mergeBtn.textContent = 'テンプレを選択してください';
+    mergeBtn.disabled = true;
+  } else {
+    mergeBtn.textContent = 'ファイルをアップしてください';
+    mergeBtn.disabled = true;
+  }
+}
+
+// ダウンロードボタン：保存だけする
+mergeBtn.addEventListener('click', () => {
+  if (!mergedPdfBytes) return;
+  const applicant = applicantInput.value.trim() || '申請人名';
+  const date = dateInput.value.trim() || '日付';
+  const blob = new Blob([mergedPdfBytes], { type: 'application/pdf' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${applicant}_${date}.pdf`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  setStatus(`✓ ${applicant}_${date}.pdf を保存`, 'ok');
 });
 
 // ========== OFUSA拡張機能（サイドパネル）からのデータ受信 ==========
