@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- SCAN_VERSION ver.20260519.02 -->
+<!-- SCAN_VERSION ver.20260519.03 -->
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
@@ -266,6 +266,25 @@
     background: var(--accent);
     color: white;
   }
+  /* noFile項目：有/無トグルボタン用 */
+  .row-attach.mark-yes {
+    background: var(--accent-soft);
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+  .row-attach.mark-yes:hover {
+    background: var(--accent);
+    color: white;
+  }
+  .row-attach.mark-no {
+    background: white;
+    border-color: var(--sub);
+    color: var(--sub);
+  }
+  .row-attach.mark-no:hover {
+    background: var(--sub);
+    color: white;
+  }
   .row-attach .fname-mini {
     overflow: hidden; text-overflow: ellipsis;
     white-space: nowrap;
@@ -509,7 +528,7 @@
 <div class="app">
   <header>
     <div>
-      <h1>入管提出書類　スキャン結合<span class="h1-sub">特定技能１号・在留資格認定証明書交付申請　第１表</span><span class="h1-version" id="appVersion">ver.20260519.02</span></h1>
+      <h1>入管提出書類　スキャン結合<span class="h1-sub">特定技能１号・在留資格認定証明書交付申請　第１表</span><span class="h1-version" id="appVersion">ver.20260519.03</span></h1>
     </div>
     <div style="font-size:11px;color:var(--sub);" id="dateDisplay"></div>
   </header>
@@ -608,7 +627,7 @@
 
 <script>
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-const SCAN_VERSION = 'ver.20260519.02';
+const SCAN_VERSION = 'ver.20260519.03';
 console.log(`[scan-merger] ${SCAN_VERSION}`);
 const { PDFDocument, rgb } = PDFLib;
 
@@ -1062,24 +1081,52 @@ function layoutOverlays() {
 
     const slot = slots[doc.key];
     const isSelected = selectedKey === doc.key;
+    // この項目の代表マル状態（resolveStampMarkで判定）
+    const repMark = resolveStampMark(doc, repKey);
 
     let inner = `
       <span class="row-no-badge ${slot ? 'filled' : ''}">${doc.noLabel || doc.no}</span>
-      <button class="row-attach ${slot ? 'filled' : ''} ${isSelected ? 'selected' : ''}" data-action="${doc.isTemplate ? 'preview-template' : 'select'}" data-key="${doc.key}" title="${escapeHtml(doc.short)}">
     `;
-    if (doc.isTemplate) {
-      inner += `<span class="fname-mini">📋 ${escapeHtml(doc.short)}</span>`;
-    } else if (slot) {
-      inner += `<span class="fname-mini">📎 ${escapeHtml(slot.name)}</span><span class="pages-mini">${slot.pages || '…'}p</span>`;
+
+    if (doc.noFile) {
+      // ファイル添付なし項目（No.1, No.2など）：マルのトグルボタン
+      const markText = repMark ? '有 ○' : '無 ○';
+      const markClass = repMark ? 'mark-yes' : 'mark-no';
+      inner += `<button class="row-attach ${markClass}" data-action="toggle-mark" data-key="${doc.key}" title="${escapeHtml(doc.short)} - クリックで有/無切替">
+        <span class="fname-mini">${escapeHtml(doc.short)}</span>
+        <span class="pages-mini" style="font-weight:600;">${markText}</span>
+      </button>`;
     } else {
-      inner += `<span class="fname-mini">＋ ${escapeHtml(doc.short)}</span>`;
-    }
-    inner += `</button>`;
-    if (slot && !doc.isTemplate) {
-      inner += `<button class="row-clear" data-action="clear" data-key="${doc.key}" title="クリア">×</button>`;
+      inner += `<button class="row-attach ${slot ? 'filled' : ''} ${isSelected ? 'selected' : ''}" data-action="${doc.isTemplate ? 'preview-template' : 'select'}" data-key="${doc.key}" title="${escapeHtml(doc.short)}">`;
+      if (doc.isTemplate) {
+        inner += `<span class="fname-mini">📋 ${escapeHtml(doc.short)}</span>`;
+      } else if (slot) {
+        inner += `<span class="fname-mini">📎 ${escapeHtml(slot.name)}</span><span class="pages-mini">${slot.pages || '…'}p</span>`;
+      } else {
+        inner += `<span class="fname-mini">＋ ${escapeHtml(doc.short)}</span>`;
+      }
+      inner += `</button>`;
+      if (slot && !doc.isTemplate) {
+        inner += `<button class="row-clear" data-action="clear" data-key="${doc.key}" title="クリア">×</button>`;
+      }
     }
     overlay.innerHTML = inner;
     info.wrapEl.appendChild(overlay);
+
+    // noFile項目：マルのトグル
+    overlay.querySelector('[data-action="toggle-mark"]')?.addEventListener('click', e => {
+      const key = e.currentTarget.dataset.key;
+      const d = DOCS.find(x => x.key === key);
+      if (!d) return;
+      // 各stampKeyについて、現在「有」なら「無」へ、「無」なら「有」へトグル
+      d.stampKey.forEach(sk => {
+        const cur = resolveStampMark(d, sk);
+        manualStamps[sk] = cur ? 'no' : 'yes';
+      });
+      drawStampsOnCanvas();
+      renderOverlaysOnly();
+      scheduleMergeRebuild();
+    });
 
     // クリックハンドラ
     overlay.querySelector('[data-action="select"]')?.addEventListener('click', e => {
