@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- SCAN_VERSION ver.20260518.04 -->
+<!-- SCAN_VERSION ver.20260518.05 -->
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
@@ -508,7 +508,7 @@
 <div class="app">
   <header>
     <div>
-      <h1>入管提出書類　スキャン結合<span class="h1-sub">特定技能１号・在留資格認定証明書交付申請　第１表</span><span class="h1-version" id="appVersion">ver.20260518.04</span></h1>
+      <h1>入管提出書類　スキャン結合<span class="h1-sub">特定技能１号・在留資格認定証明書交付申請　第１表</span><span class="h1-version" id="appVersion">ver.20260518.05</span></h1>
     </div>
     <div style="font-size:11px;color:var(--sub);" id="dateDisplay"></div>
   </header>
@@ -556,7 +556,7 @@
         <span class="zoom-display" id="zoomDisplay">100%</span>
         <button class="zoom-btn" id="zoomInBtn" title="拡大">＋</button>
         <button class="zoom-btn" id="zoomFitBtn" title="幅に合わせる" style="width:auto;padding:0 10px;font-size:11px;font-weight:normal;">幅合せ</button>
-        <span class="hint">マウスホイールでスクロール／Ctrl + ホイールで拡縮</span>
+        <span class="hint">Ctrl+ホイール: 拡縮 ／ 「有」「無」クリック: 手動切替 ／ 右クリック: 自動に戻す</span>
       </div>
       <div class="empty-state" id="emptyState">
         <div class="empty-state-icon">📋</div>
@@ -603,7 +603,7 @@
 
 <script>
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-const SCAN_VERSION = 'ver.20260518.04';
+const SCAN_VERSION = 'ver.20260518.05';
 console.log(`[scan-merger] ${SCAN_VERSION}`);
 const { PDFDocument, rgb } = PDFLib;
 
@@ -656,10 +656,26 @@ const DOCS = [
 // 状態
 const slots = {};       // key → ファイル
 const checked = {};     // key → bool（手動チェック）
+// 手動マルの状態：stampKey → 'yes' | 'no' | null（null=自動）
+// 例: { 1: 'yes', '5b': 'no' }
+const manualStamps = {};
 let selectedKey = null;
 let templatePdfBytes = null;
 let templatePdfJs = null;     // pdf.js PDF object
 let pageRenderInfo = [];      // 各PDFページの canvas / scale / height など
+
+// 指定 stampKey に対する最終的な「有○か無○か」を返す
+// 優先順位: manualStamps[k] > その項目のチェック状態（ファイル/手動）
+function resolveStampMark(doc, stampKey) {
+  // 手動指定があればそれが最優先
+  const manual = manualStamps[stampKey];
+  if (manual === 'yes') return true;
+  if (manual === 'no') return false;
+  // 自動: 公式PDF本体は常に有○
+  if (doc.isTemplate) return !!templatePdfBytes;
+  // 自動: 通常項目は checked か ファイルあり
+  return checked[doc.key] !== undefined ? !!checked[doc.key] : !!slots[doc.key];
+}
 
 // 初期化
 const today = new Date();
@@ -792,7 +808,14 @@ async function renderTemplatePdf() {
     // 表示サイズ（CSS）
     canvas.style.width = cssWidth + 'px';
     canvas.style.height = cssHeight + 'px';
+    canvas.style.cursor = 'pointer';
+    canvas.title = '「有」「無」マークをクリックで手動切替';
     wrap.appendChild(canvas);
+
+    // 「有・無」マーク手動切替のクリックハンドラ
+    canvas.addEventListener('click', handleStampCanvasClick);
+    // 右クリックで「自動に戻す」
+    canvas.addEventListener('contextmenu', handleStampCanvasContextMenu);
 
     await page.render({ canvasContext: canvas.getContext('2d'), viewport: renderViewport }).promise;
 
@@ -815,6 +838,48 @@ async function renderTemplatePdf() {
   updateZoomDisplay();
 }
 
+// Canvas クリック時：「有」「無」○マーク領域なら手動切替
+function findHitArea(e) {
+  const canvas = e.currentTarget;
+  const rect = canvas.getBoundingClientRect();
+  const x = e.clientX - rect.left;
+  const y = e.clientY - rect.top;
+  const wrap = canvas.parentElement;
+  const pageIdx = Number(wrap.dataset.pageIdx);
+  const info = pageRenderInfo[pageIdx];
+  if (!info || !info.hitAreas) return null;
+  for (const h of info.hitAreas) {
+    const dx = x - h.xCss;
+    const dy = y - h.yCss;
+    if (dx * dx + dy * dy <= h.rCss * h.rCss) return h;
+  }
+  return null;
+}
+
+function handleStampCanvasClick(e) {
+  const hit = findHitArea(e);
+  if (!hit) return;
+  e.preventDefault();
+  e.stopPropagation();
+  // 「有」または「無」を手動でセット
+  // すでに同じ手動値なら自動に戻す
+  if (manualStamps[hit.stampKey] === hit.mark) {
+    delete manualStamps[hit.stampKey];
+  } else {
+    manualStamps[hit.stampKey] = hit.mark;
+  }
+  drawStampsOnCanvas();
+}
+
+function handleStampCanvasContextMenu(e) {
+  const hit = findHitArea(e);
+  if (!hit) return;
+  e.preventDefault();
+  // 右クリックで自動に戻す
+  delete manualStamps[hit.stampKey];
+  drawStampsOnCanvas();
+}
+
 // Canvas に「有・無」の○を描画（高解像度対応）
 async function drawStampsOnCanvas() {
   if (!templatePdfJs) return;
@@ -833,24 +898,46 @@ async function drawStampsOnCanvas() {
     await page.render({ canvasContext: ctx, viewport: renderViewport }).promise;
 
     // ○を描画（renderScale座標系で）
+    // ついでに、このページ上の「有」「無」のクリック判定領域を info.hitAreas に記録
+    info.hitAreas = [];
     DOCS.forEach(doc => {
-      const isChecked = doc.isTemplate
-        ? !!templatePdfBytes
-        : (checked[doc.key] !== undefined ? checked[doc.key] : !!slots[doc.key]);
-
       doc.stampKey.forEach(k => {
         const pos = STAMP_POSITIONS[k];
         if (!pos || pos.pdfPageIdx !== i) return;
 
-        const x = (isChecked ? STAMP_X_YES : STAMP_X_NO) * info.renderScale;
+        const isYes = resolveStampMark(doc, k);
+        const isManual = manualStamps[k] === 'yes' || manualStamps[k] === 'no';
+
+        const x = (isYes ? STAMP_X_YES : STAMP_X_NO) * info.renderScale;
         const y = (info.pdfHeight - (pos.y + 4)) * info.renderScale;
         const r = STAMP_RADIUS * info.renderScale;
 
         ctx.beginPath();
         ctx.arc(x, y, r, 0, Math.PI * 2);
-        ctx.strokeStyle = 'rgba(220, 38, 38, 0.85)';
-        ctx.lineWidth = Math.max(1.5, 1.8 * info.renderScale * 0.7);
+        // 手動なら少し濃く、自動なら通常
+        ctx.strokeStyle = isManual ? 'rgba(180, 30, 30, 1)' : 'rgba(220, 38, 38, 0.85)';
+        ctx.lineWidth = Math.max(1.5, (isManual ? 2.2 : 1.8) * info.renderScale * 0.7);
         ctx.stroke();
+
+        // クリック判定領域（CSS座標系）
+        // 「有」と「無」の両方のクリック領域を記録
+        const cellH = 18; // 行の高さ目安（CSS座標）
+        info.hitAreas.push({
+          stampKey: k,
+          docKey: doc.key,
+          mark: 'yes',
+          xCss: STAMP_X_YES * info.cssScale,
+          yCss: (info.pdfHeight - (pos.y + 4)) * info.cssScale,
+          rCss: STAMP_RADIUS * info.cssScale + 3,
+        });
+        info.hitAreas.push({
+          stampKey: k,
+          docKey: doc.key,
+          mark: 'no',
+          xCss: STAMP_X_NO * info.cssScale,
+          yCss: (info.pdfHeight - (pos.y + 4)) * info.cssScale,
+          rCss: STAMP_RADIUS * info.cssScale + 3,
+        });
       });
     });
 
@@ -1415,15 +1502,13 @@ async function generateStampedPdf() {
 
   // 「有・無」への○マーク描画
   DOCS.forEach(d => {
-    const isChecked = d.isTemplate
-      ? !!templatePdfBytes
-      : (checked[d.key] !== undefined ? checked[d.key] : !!slots[d.key]);
     d.stampKey.forEach(k => {
       const pos = STAMP_POSITIONS[k];
       if (!pos) return;
       const pageObj = pages[pos.pdfPageIdx];
       if (!pageObj) return;
-      const x = isChecked ? STAMP_X_YES : STAMP_X_NO;
+      const isYes = resolveStampMark(d, k);
+      const x = isYes ? STAMP_X_YES : STAMP_X_NO;
       pageObj.drawCircle({
         x, y: pos.y + 4,
         size: STAMP_RADIUS,
