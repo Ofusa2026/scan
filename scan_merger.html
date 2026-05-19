@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- SCAN_VERSION ver.20260519.03 -->
+<!-- SCAN_VERSION ver.20260519.04 -->
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
@@ -528,7 +528,7 @@
 <div class="app">
   <header>
     <div>
-      <h1>入管提出書類　スキャン結合<span class="h1-sub">特定技能１号・在留資格認定証明書交付申請　第１表</span><span class="h1-version" id="appVersion">ver.20260519.03</span></h1>
+      <h1>入管提出書類　スキャン結合<span class="h1-sub">特定技能１号・在留資格認定証明書交付申請　第１表</span><span class="h1-version" id="appVersion">ver.20260519.04</span></h1>
     </div>
     <div style="font-size:11px;color:var(--sub);" id="dateDisplay"></div>
   </header>
@@ -627,7 +627,7 @@
 
 <script>
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-const SCAN_VERSION = 'ver.20260519.03';
+const SCAN_VERSION = 'ver.20260519.04';
 console.log(`[scan-merger] ${SCAN_VERSION}`);
 const { PDFDocument, rgb } = PDFLib;
 
@@ -1132,12 +1132,17 @@ function layoutOverlays() {
     overlay.querySelector('[data-action="select"]')?.addEventListener('click', e => {
       const key = e.currentTarget.dataset.key;
       if (slots[key]) {
-        // 既にファイルあるなら、選択（プレビュー）
+        // 既にファイルあり → 結合PDFの該当ページへスクロール
         selectedKey = key;
         renderOverlaysOnly();
-        showAttachmentPreview(key);
+        if (mergedPdfBytes && previewState.key === '__merged__') {
+          scrollToMergedDocPage(key);
+        } else {
+          // フォールバック：個別プレビュー
+          showAttachmentPreview(key);
+        }
       } else {
-        // 添付
+        // ファイル未添付 → ファイル選択
         currentSelectKey = key;
         hiddenFileInput.click();
       }
@@ -1224,8 +1229,13 @@ async function handleFile(key, file) {
   await drawStampsOnCanvas();
   layoutOverlays();
   updateSummary();
-  showAttachmentPreview(key);
+  // 添付直後にスクロールしたいキーを記録
+  // 結合完了後に scrollToMergedDocPage で該当ページへ
+  pendingScrollKey = key;
 }
+
+// 結合完了後にスクロールしたいキー（ファイル添付直後など）
+let pendingScrollKey = null;
 
 function updateSummary() {
   const filled = Object.keys(slots).length;
@@ -1489,7 +1499,70 @@ function setupPageObserver(pdf) {
   }
 }
 
-async function showAttachmentPreview(key) {
+// 結合PDF全体を右ペインに表示
+async function showMergedPreview() {
+  if (!mergedPdfBytes) {
+    clearMergedPreview();
+    return;
+  }
+  if (pageObserver) { pageObserver.disconnect(); pageObserver = null; }
+
+  // 表示用にPDFを開く
+  const pdf = await pdfjsLib.getDocument({ data: mergedPdfBytes.slice(0) }).promise;
+  previewState = { key: '__merged__', pdf, pageEls: [], imgEl: null };
+
+  previewHeaderTitle.innerHTML = `
+    <span class="ph-key">結合PDF</span>
+    <span class="ph-name">${pdf.numPages}ページ / ${formatSize(mergedPdfBytes.byteLength)}</span>
+  `;
+  previewNav.innerHTML = '';
+  previewThumbs.innerHTML = '';
+  previewBody.innerHTML = '<div class="preview-loading">読み込み中...</div>';
+  previewContent.classList.remove('empty');
+
+  if (pdf.numPages === 1) {
+    previewContent.classList.add('single-page');
+  } else {
+    previewContent.classList.remove('single-page');
+  }
+
+  previewBody.innerHTML = '';
+  const stack = document.createElement('div');
+  stack.className = 'preview-pages-stack';
+  previewBody.appendChild(stack);
+
+  renderPreviewNav(pdf.numPages > 1, pdf.numPages);
+  await redrawPreviewMain();
+  await renderThumbnailRail();
+
+  // ファイル添付直後の自動スクロール
+  if (pendingScrollKey) {
+    const k = pendingScrollKey;
+    pendingScrollKey = null;
+    // 少し待ってから（DOMが安定するまで）
+    setTimeout(() => scrollToMergedDocPage(k), 100);
+  }
+}
+
+function clearMergedPreview() {
+  if (previewState.key === '__merged__') {
+    clearAttachmentPreview();
+  }
+}
+
+// 結合PDF内の指定キーのページにスクロール
+function scrollToMergedDocPage(docKey) {
+  const pageNum = mergedPageOffsets[docKey];
+  if (!pageNum || !previewState.pageEls) return false;
+  const target = previewState.pageEls[pageNum - 1];
+  if (target) {
+    target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    return true;
+  }
+  return false;
+}
+
+
   const slot = slots[key];
   if (!slot) { clearAttachmentPreview(); return; }
   const docDef = DOCS.find(d => d.key === key);
@@ -1652,6 +1725,11 @@ let mergeInProgress = false;    // 結合中フラグ
 let mergeNeedsRerun = false;    // 結合中に変更があった場合のフラグ
 let mergeDebounceTimer = null;
 
+// 各docDef.key → 結合PDF内の開始ページ番号（1-indexed）
+let mergedPageOffsets = {};
+// 結合PDFの「公式PDF」部分のページ数
+let mergedTemplatePageCount = 0;
+
 async function rebuildMergedPdf() {
   if (mergeInProgress) {
     mergeNeedsRerun = true;
@@ -1659,7 +1737,10 @@ async function rebuildMergedPdf() {
   }
   if (!templatePdfBytes && Object.keys(slots).length === 0) {
     mergedPdfBytes = null;
+    mergedPageOffsets = {};
+    mergedTemplatePageCount = 0;
     updateMergeBtnState();
+    clearMergedPreview();
     return;
   }
   mergeInProgress = true;
@@ -1667,6 +1748,7 @@ async function rebuildMergedPdf() {
 
   try {
     const merged = await PDFDocument.create();
+    mergedPageOffsets = {};
 
     // 1) 公式PDF（○・氏名・社名記入済み）
     if (templatePdfBytes) {
@@ -1675,6 +1757,9 @@ async function rebuildMergedPdf() {
       const tDoc = await PDFDocument.load(stamped);
       const pages = await merged.copyPages(tDoc, tDoc.getPageIndices());
       pages.forEach(p => merged.addPage(p));
+      mergedTemplatePageCount = pages.length;
+    } else {
+      mergedTemplatePageCount = 0;
     }
 
     // 2) 各書類（番号順）
@@ -1683,6 +1768,10 @@ async function rebuildMergedPdf() {
       const docDef = filledDocs[i];
       const f = slots[docDef.key];
       setStatus(`結合中: (${i + 1}/${filledDocs.length}) No.${docDef.noLabel || docDef.no}`, 'work');
+
+      // このドキュメントの開始ページ（1-indexed）を記録
+      mergedPageOffsets[docDef.key] = merged.getPageCount() + 1;
+
       if (f.type === 'pdf') {
         const src = await PDFDocument.load(f.arrayBuffer.slice(0), { ignoreEncryption: true });
         const pages = await merged.copyPages(src, src.getPageIndices());
@@ -1708,6 +1797,9 @@ async function rebuildMergedPdf() {
     mergedPdfBytes = await merged.save();
     const totalPages = merged.getPageCount();
     setStatus(`✓ 結合済み（${totalPages}p、${formatSize(mergedPdfBytes.byteLength)}）`, 'ok');
+
+    // 右ペインを結合PDFで更新
+    await showMergedPreview();
   } catch (e) {
     console.error('結合エラー:', e);
     mergedPdfBytes = null;
