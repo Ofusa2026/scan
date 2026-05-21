@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- SCAN_VERSION ver.20260519.07 -->
+<!-- SCAN_VERSION ver.20260521.01 -->
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
@@ -528,7 +528,7 @@
 <div class="app">
   <header>
     <div>
-      <h1>入管提出書類　スキャン結合<span class="h1-sub">特定技能１号・在留資格認定証明書交付申請　第１表</span><span class="h1-version" id="appVersion">ver.20260519.07</span></h1>
+      <h1>入管提出書類　スキャン結合<span class="h1-sub">特定技能１号・在留資格認定証明書交付申請　第１表</span><span class="h1-version" id="appVersion">ver.20260521.01</span></h1>
     </div>
     <div style="font-size:11px;color:var(--sub);" id="dateDisplay"></div>
   </header>
@@ -628,7 +628,7 @@
 
 <script>
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-const SCAN_VERSION = 'ver.20260519.07';
+const SCAN_VERSION = 'ver.20260521.01';
 console.log(`[scan-merger] ${SCAN_VERSION}`);
 const { PDFDocument, rgb } = PDFLib;
 
@@ -2067,8 +2067,8 @@ function showDriveUnmatchedCandidates(unmatched) {
     <div style="overflow-y:auto;padding:6px 8px;">
       ${unmatched.map((f, i) => `
         <div class="cand-row" data-id="${escapeHtml(f.driveFileId)}" style="display:flex;gap:6px;align-items:center;padding:4px 0;border-bottom:1px dashed #eee;">
-          <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escapeHtml(f.name)}">
-            <span style="color:${f.sourceFolder === 'persons' ? '#0a7' : '#06c'};font-size:9px;">${f.sourceFolder === 'persons' ? '人材' : '企業'}</span>
+          <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escapeHtml((f.folderPath ? f.folderPath + '/' : '') + f.name)}">
+            <span style="color:${f.sourceFolder === 'persons' ? '#0a7' : '#06c'};font-size:9px;">${f.sourceFolder === 'persons' ? '人材' : '企業'}${f.folderPath ? '/' + escapeHtml(f.folderPath) : ''}</span>
             ${escapeHtml(f.name)}
           </span>
           <select class="cand-select" data-id="${escapeHtml(f.driveFileId)}" data-name="${escapeHtml(f.name)}" data-mime="${escapeHtml(f.mimeType || '')}" style="font-size:10px;max-width:120px;">
