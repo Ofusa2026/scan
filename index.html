@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- SCAN_VERSION ver.20260519.05 -->
+<!-- SCAN_VERSION ver.20260519.06 -->
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
@@ -528,7 +528,7 @@
 <div class="app">
   <header>
     <div>
-      <h1>入管提出書類　スキャン結合<span class="h1-sub">特定技能１号・在留資格認定証明書交付申請　第１表</span><span class="h1-version" id="appVersion">ver.20260519.05</span></h1>
+      <h1>入管提出書類　スキャン結合<span class="h1-sub">特定技能１号・在留資格認定証明書交付申請　第１表</span><span class="h1-version" id="appVersion">ver.20260519.06</span></h1>
     </div>
     <div style="font-size:11px;color:var(--sub);" id="dateDisplay"></div>
   </header>
@@ -627,7 +627,7 @@
 
 <script>
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-const SCAN_VERSION = 'ver.20260519.05';
+const SCAN_VERSION = 'ver.20260519.06';
 console.log(`[scan-merger] ${SCAN_VERSION}`);
 const { PDFDocument, rgb } = PDFLib;
 
@@ -1345,9 +1345,13 @@ function rerenderPreviewPages() {
 async function redrawPreviewMain() {
   const { pdf, key } = previewState;
   const slot = slots[key];
-  if (!slot) return;
+  const isMerged = (key === '__merged__');
 
-  if (slot.type === 'image') {
+  // 結合PDFでもなく個別ファイルでもなければ何もしない
+  if (!isMerged && !slot) return;
+
+  // 画像（個別ファイルのみ）
+  if (slot && slot.type === 'image') {
     if (previewState.imgEl) {
       previewState.imgEl.style.transform = `scale(${previewZoom})`;
       previewState.imgEl.style.transformOrigin = 'top center';
